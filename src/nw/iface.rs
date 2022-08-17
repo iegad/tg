@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use crate::g;
 
@@ -6,8 +6,8 @@ use super::pack::Package;
 
 pub trait IServer {
     fn host(&self) -> &SocketAddr;
-    fn current_connections(&self) -> usize;
     fn max_connections(&self) -> usize;
+    fn current_connections(&self) -> usize;
 }
 
 pub trait IConn {
@@ -16,6 +16,7 @@ pub trait IConn {
     fn sockfd(&self) -> i32;
     fn send_seq(&self) -> u32;
     fn recv_seq(&self) -> u32;
+    fn req(&self) -> &Package;
 }
 
 pub trait IProc: Copy + Clone + Send + Sync + 'static {
@@ -52,5 +53,5 @@ pub trait IProc: Copy + Clone + Send + Sync + 'static {
         );
     }
 
-    fn on_process(&self, conn: &dyn IConn, in_pack: &Package) -> g::Result<Vec<u8>>;
+    fn on_process(&self, conn: &mut dyn IConn) -> g::Result<Arc<Package>>;
 }

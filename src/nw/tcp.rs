@@ -7,7 +7,10 @@ use tokio::{
     sync::{broadcast, Semaphore},
 };
 
-use super::{iface, pack};
+use super::{
+    iface::{self},
+    pack,
+};
 
 pub struct Conn {
     sockfd: i32,
@@ -15,6 +18,7 @@ pub struct Conn {
     recv_seq: u32,
     remote: SocketAddr,
     local: SocketAddr,
+    req: pack::Package,
 }
 
 impl Conn {
@@ -41,6 +45,7 @@ impl Conn {
             recv_seq: 0,
             remote,
             local,
+            req: pack::Package::new(),
         })
     }
 }
@@ -64,6 +69,10 @@ impl iface::IConn for Conn {
 
     fn recv_seq(&self) -> u32 {
         self.recv_seq
+    }
+
+    fn req(&self) -> &pack::Package {
+        &self.req
     }
 }
 
@@ -99,17 +108,17 @@ impl iface::IServer for Server {
         &self.host
     }
 
-    fn current_connections(&self) -> usize {
-        self.max_connections - self.limit_connections.available_permits()
-    }
-
     fn max_connections(&self) -> usize {
         self.max_connections
+    }
+
+    fn current_connections(&self) -> usize {
+        self.max_connections - self.limit_connections.available_permits()
     }
 }
 
 impl Server {
-    pub async fn run<TProc>(&self, proc: TProc, notify_shutdown: broadcast::Sender<u8>)
+    pub async fn run<TProc>(&self, proc: TProc)
     where
         TProc: iface::IProc,
     {
@@ -123,7 +132,7 @@ impl Server {
             Err(err) => panic!("tcp server bind failed: {:?}", err),
         };
 
-        let mut shutdown = notify_shutdown.subscribe();
+        let (notify_shutdown, mut shutdown) = broadcast::channel(1);
 
         'server_loop: loop {
             let permit = self
@@ -174,7 +183,7 @@ impl Server {
     ) where
         TProc: iface::IProc,
     {
-        let conn = match Conn::new(&stream) {
+        let mut conn = match Conn::new(&stream) {
             Ok(c) => c,
             Err(err) => {
                 println!("conn.new failed: {:?}", err);
@@ -191,8 +200,6 @@ impl Server {
         let (wch_sender, mut wch_receiver) = tokio::sync::mpsc::channel(g::DEFAULT_CHAN_SIZE);
         let mut timeout_ticker =
             tokio::time::interval(std::time::Duration::from_secs(g::DEFAULT_READ_TIMEOUT));
-        let mut rbuf = [0u8; 1500];
-        let mut in_pack = pack::Package::new();
 
         'conn_loop: loop {
             timeout_ticker.reset();
@@ -209,20 +216,20 @@ impl Server {
                 }
 
                 result_rsp = wch_receiver.recv() => {
-                    let rsp: Vec<u8> = match result_rsp {
+                    let rsp: Arc<pack::Package> = match result_rsp {
                         None => {
                             panic!("failed wch rsp");
                         }
                         Some(v) => v,
                     };
 
-                    if let Err(err) = writer.write_all(&rsp).await {
+                    if let Err(err) = writer.write_all(rsp.to_bytes()).await {
                         proc.on_conn_error(&conn, g::Err::TcpWriteFailed(format!("write failed: {:?}", err)));
                         break 'conn_loop;
                     }
                 }
 
-                result_read = reader.read(&mut rbuf) => {
+                result_read = reader.read(conn.req.as_bytes()) => {
                     let n = match result_read {
                         Ok(0) => {
                             println!("conn[{}:{:?}] closed", conn.sockfd, conn.remote);
@@ -237,7 +244,8 @@ impl Server {
                         }
                     };
 
-                    let ok = match in_pack.parse(&rbuf[..n]) {
+
+                    let ok = match conn.req.parse(n) {
                         Err(err) => {
                             proc.on_conn_error(&conn, err);
                             break 'conn_loop;
@@ -246,8 +254,9 @@ impl Server {
                         Ok(v) => v,
                     };
 
+
                     if ok {
-                        let rsp = match proc.on_process(&conn, &in_pack) {
+                        let rsp = match proc.on_process(&mut conn) {
                             Err(err) => {
                                 proc.on_conn_error(&conn, err);
                                 break 'conn_loop;
@@ -256,12 +265,13 @@ impl Server {
                             Ok(rsp) => rsp,
                         };
 
-                        in_pack.clear();
+                        conn.req.clear();
 
-                        if let Err(err) = wch_sender.send(rsp).await {
-                            panic!("write channel[mpsc] send failed: {:?}", err);
+                        if let Err(err) = wch_sender.send(rsp.clone()).await {
+                            panic!("write channel[mpsc] send failed: {}", err);
                         }
                     }
+
                 }
             }
         }

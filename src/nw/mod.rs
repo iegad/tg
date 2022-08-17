@@ -1,5 +1,4 @@
 pub mod iface;
-pub mod pack_comp;
 pub mod pack;
 pub mod tcp;
 
