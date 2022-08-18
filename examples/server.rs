@@ -1,31 +1,29 @@
-use std::sync::Arc;
-
 use tg::{
     g,
-    nw::{self, iface, pack::Package},
+    nw::{self, iface, pack},
 };
 
 #[derive(Clone, Copy)]
 struct EchoProc;
 
 impl nw::iface::IProc for EchoProc {
-    fn on_process(&self, conn: &mut dyn iface::IConn) -> g::Result<Arc<Package>> {
+    fn on_process(&self, conn: &mut dyn iface::IConn) -> g::Result<pack::PackagePtr> {
         let req = conn.req();
 
-        println!(
-            "[{}]from conn[{}:{:?}] => {}",
-            thread_id::get(),
-            conn.sockfd(),
-            conn.remote(),
-            // unsafe { std::str::from_utf8_unchecked(req.data()) }
-            req.data_len(),
-        );
+        // println!(
+        //     "[{}]from conn[{}:{:?}] => {}",
+        //     thread_id::get(),
+        //     conn.sockfd(),
+        //     conn.remote(),
+        //     unsafe { std::str::from_utf8_unchecked(req.data()) } // req.data_len(),
+        // );
 
-        Ok(Arc::new(Package::with_params(
-            req.pid(),
-            req.idempotent(),
-            req.data(),
-        )))
+        let mut rsp = pack::PACK_POOL.pull();
+        rsp.set_pid(req.pid());
+        rsp.set_idempotent(req.idempotent());
+        rsp.set_data(req.data());
+
+        Ok(rsp)
     }
 }
 

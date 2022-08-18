@@ -13,12 +13,12 @@ use super::{
 };
 
 pub struct Conn {
-    sockfd: i32,
-    send_seq: u32,
-    recv_seq: u32,
-    remote: SocketAddr,
-    local: SocketAddr,
-    req: pack::Package,
+    sockfd: i32,        // 原套接字
+    send_seq: u32,      // 发送序列
+    recv_seq: u32,      // 接收序列
+    remote: SocketAddr, // 远端地址
+    local: SocketAddr,  // 本端地址
+    req: pack::Package, // 请求对象
 }
 
 impl Conn {
@@ -143,6 +143,7 @@ impl Server {
                 .unwrap();
 
             select! {
+                // 接收连接句柄
                 res_accept = listener.accept() => {
                     let (stream, addr) = match res_accept {
                         Ok((s, addr)) => (s,addr),
@@ -160,12 +161,14 @@ impl Server {
                     });
                 }
 
+                // SIGINT 信号句柄
                 _ = signal::ctrl_c() => {
                     if let Err(err) = notify_shutdown.send(1) {
                         panic!("shutdown_sender.send failed: {:?}", err);
                     }
                 }
 
+                // 关停句柄
                 _ = shutdown.recv() => {
                     break 'server_loop;
                 }
@@ -183,6 +186,7 @@ impl Server {
     ) where
         TProc: iface::IProc,
     {
+        // TODO: Conn 从对象池中获取
         let mut conn = match Conn::new(&stream) {
             Ok(c) => c,
             Err(err) => {
@@ -205,18 +209,21 @@ impl Server {
             timeout_ticker.reset();
 
             select! {
+                // 关停句柄
                 _ = notify_shutdown.recv() => {
                     println!("server is shutdown");
                     break 'conn_loop;
                 }
 
+                // 超时句柄
                 _ = timeout_ticker.tick() => {
                     proc.on_conn_error(&conn, g::Err::TcpReadTimeout);
                     break 'conn_loop;
                 }
 
+                // 消息发送句柄
                 result_rsp = wch_receiver.recv() => {
-                    let rsp: Arc<pack::Package> = match result_rsp {
+                    let rsp: pack::PackagePtr = match result_rsp {
                         None => {
                             panic!("failed wch rsp");
                         }
@@ -227,8 +234,10 @@ impl Server {
                         proc.on_conn_error(&conn, g::Err::TcpWriteFailed(format!("write failed: {:?}", err)));
                         break 'conn_loop;
                     }
+                    conn.send_seq += 1;
                 }
 
+                // 消息接收句柄
                 result_read = reader.read(conn.req.as_bytes()) => {
                     let n = match result_read {
                         Ok(0) => {
@@ -244,7 +253,6 @@ impl Server {
                         }
                     };
 
-
                     let ok = match conn.req.parse(n) {
                         Err(err) => {
                             proc.on_conn_error(&conn, err);
@@ -254,8 +262,8 @@ impl Server {
                         Ok(v) => v,
                     };
 
-
                     if ok {
+                        conn.recv_seq += 1;
                         let rsp = match proc.on_process(&mut conn) {
                             Err(err) => {
                                 proc.on_conn_error(&conn, err);
@@ -265,13 +273,10 @@ impl Server {
                             Ok(rsp) => rsp,
                         };
 
-                        conn.req.clear();
-
-                        if let Err(err) = wch_sender.send(rsp.clone()).await {
+                        if let Err(err) = wch_sender.send(rsp).await {
                             panic!("write channel[mpsc] send failed: {}", err);
                         }
                     }
-
                 }
             }
         }

@@ -8,15 +8,34 @@
 // ---------------------------
 
 use crate::g;
+use core::slice::from_raw_parts;
+use lazy_static::lazy_static;
+use lockfree_object_pool::{LinearObjectPool, LinearReusable};
+use std::sync::Arc;
 
 /// 消息头
 ///
 /// 消息头为定长 8 字节
 ///
 /// # 内存布局
+/// | [pid] 2字节 | [idempotent] 4字节 | [data_len] 4字节 |
 pub struct Package {
-    raw: Vec<u8>,
-    raw_pos: usize,
+    raw: Vec<u8>,   //  原数据
+    raw_pos: usize, // 接收位置
+}
+
+pub type PackagePtr<'a> = LinearReusable<'a, Package>;
+
+lazy_static! {
+    pub static ref PACK_POOL: Arc<LinearObjectPool<Package>> = {
+        let v = Arc::new(LinearObjectPool::<Package>::new(
+            || Package::new(),
+            |v| {
+                v.raw_pos = 0;
+            },
+        ));
+        v
+    };
 }
 
 impl Package {
@@ -28,18 +47,20 @@ impl Package {
     }
 
     pub fn with_params(pid: u16, idempotent: u32, data: &[u8]) -> Package {
-        use core::slice::from_raw_parts;
+        let data_len = data.len() as u32;
+        let raw_len = (data_len + 10) as usize;
 
-        let mut raw = vec![0u8; data.len() + 10];
+        let mut raw = vec![0u8; raw_len];
 
         raw[..2].copy_from_slice(unsafe { from_raw_parts(&pid as *const u16 as *const u8, 2) });
+
         raw[2..6]
             .copy_from_slice(unsafe { from_raw_parts(&idempotent as *const u32 as *const u8, 4) });
-        raw[6..10].copy_from_slice(unsafe {
-            from_raw_parts(&(data.len() as u32) as *const u32 as *const u8, 4)
-        });
 
-        raw[10..data.len() + 10].copy_from_slice(data);
+        raw[6..10]
+            .copy_from_slice(unsafe { from_raw_parts(&data_len as *const u32 as *const u8, 4) });
+
+        raw[10..raw_len].copy_from_slice(data);
 
         Package { raw, raw_pos: 0 }
     }
@@ -64,27 +85,53 @@ impl Package {
 
         self.raw_pos += n;
 
-        Ok(raw_len == self.raw_pos)
-    }
+        let res = raw_len == self.raw_pos;
+        if res {
+            self.raw_pos = 0;
+        }
 
-    pub fn clear(&mut self) {
-        self.raw_pos = 0;
+        Ok(res)
     }
 
     pub fn to_bytes(&self) -> &[u8] {
-        &self.raw
+        &self.raw[..10 + self.data_len()]
     }
 
     pub fn pid(&self) -> u16 {
         unsafe { *(self.raw.as_ptr() as *const u16) }
     }
 
+    pub fn set_pid(&mut self, pid: u16) {
+        self.raw[..2]
+            .copy_from_slice(unsafe { from_raw_parts(&pid as *const u16 as *const u8, 2) });
+    }
+
     pub fn idempotent(&self) -> u32 {
         unsafe { *(self.raw.as_ptr().add(2) as *const u32) }
     }
 
+    pub fn set_idempotent(&mut self, idempotent: u32) {
+        self.raw[2..6]
+            .copy_from_slice(unsafe { from_raw_parts(&idempotent as *const u32 as *const u8, 4) });
+    }
+
     pub fn data_len(&self) -> usize {
         unsafe { *(self.raw.as_ptr().add(6) as *const u32) as usize }
+    }
+
+    pub fn set_data(&mut self, data: &[u8]) {
+        let data_len = data.len();
+        let raw_len = data_len + 10;
+
+        if raw_len > self.raw.capacity() {
+            self.raw.resize(raw_len, 0);
+        }
+
+        self.raw[6..10].copy_from_slice(unsafe {
+            from_raw_parts(&(data_len as u32) as *const u32 as *const u8, 4)
+        });
+
+        self.raw[10..raw_len].copy_from_slice(data);
     }
 
     pub fn data(&self) -> &[u8] {

@@ -1,8 +1,8 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 
 use crate::g;
 
-use super::pack::Package;
+use super::pack::{self, Package};
 
 pub trait IServer {
     fn host(&self) -> &SocketAddr;
@@ -53,5 +53,5 @@ pub trait IProc: Copy + Clone + Send + Sync + 'static {
         );
     }
 
-    fn on_process(&self, conn: &mut dyn IConn) -> g::Result<Arc<Package>>;
+    fn on_process(&self, conn: &mut dyn IConn) -> g::Result<pack::PackagePtr>;
 }
