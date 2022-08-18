@@ -5,20 +5,23 @@ use tokio::{
     sync::Semaphore,
 };
 
-async fn work() {
-    let s = "Hello world";
+static STR: &str = "Hello world";
 
-    let data = s.as_bytes();
+async fn work() {
+    let data = STR.as_bytes();
 
     let mut sock = match tokio::net::TcpStream::connect("127.0.0.1:6688").await {
         Err(err) => panic!("connect failed: {:?}", err),
         Ok(v) => v,
     };
 
-    let mut rsp = nw::pack::Package::new();
+    let mut rsp = nw::pack::PACK_POOL.pull();
 
     'ntime: for i in 0..10000 {
-        let pack = nw::pack::Package::with_params(1, i + 1, data);
+        let mut pack = nw::pack::PACK_POOL.pull();
+        pack.set_pid(1);
+        pack.set_idempotent(i + 1);
+        pack.set_data(data);
 
         if let Err(err) = sock.write_all(pack.to_bytes()).await {
             println!("Err => {:?}", err);
@@ -26,7 +29,7 @@ async fn work() {
         };
 
         loop {
-            let n = match sock.read(rsp.as_bytes()).await {
+            let n = match sock.read(rsp.as_mut_bytes()).await {
                 Ok(0) => {
                     println!("EOF");
                     break 'ntime;
@@ -40,7 +43,7 @@ async fn work() {
             let ok = rsp.parse(n).unwrap();
 
             if ok {
-                assert_eq!(s, core::str::from_utf8(rsp.data()).unwrap());
+                assert_eq!(STR, core::str::from_utf8(rsp.data()).unwrap());
                 break;
             }
         }

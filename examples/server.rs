@@ -7,22 +7,13 @@ use tg::{
 struct EchoProc;
 
 impl nw::iface::IProc for EchoProc {
-    fn on_process(&self, conn: &mut dyn iface::IConn) -> g::Result<pack::PackagePtr> {
+    fn on_process(&self, conn: &mut dyn iface::IConn) -> g::Result<pack::PackageItem> {
         let req = conn.req();
-
-        // println!(
-        //     "[{}]from conn[{}:{:?}] => {}",
-        //     thread_id::get(),
-        //     conn.sockfd(),
-        //     conn.remote(),
-        //     unsafe { std::str::from_utf8_unchecked(req.data()) } // req.data_len(),
-        // );
 
         let mut rsp = pack::PACK_POOL.pull();
         rsp.set_pid(req.pid());
         rsp.set_idempotent(req.idempotent());
         rsp.set_data(req.data());
-
         Ok(rsp)
     }
 }

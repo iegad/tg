@@ -53,5 +53,5 @@ pub trait IProc: Copy + Clone + Send + Sync + 'static {
         );
     }
 
-    fn on_process(&self, conn: &mut dyn IConn) -> g::Result<pack::PackagePtr>;
+    fn on_process(&self, conn: &mut dyn IConn) -> g::Result<pack::PackageItem>;
 }

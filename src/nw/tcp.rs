@@ -223,7 +223,7 @@ impl Server {
 
                 // 消息发送句柄
                 result_rsp = wch_receiver.recv() => {
-                    let rsp: pack::PackagePtr = match result_rsp {
+                    let rsp: pack::PackageItem = match result_rsp {
                         None => {
                             panic!("failed wch rsp");
                         }
@@ -238,7 +238,7 @@ impl Server {
                 }
 
                 // 消息接收句柄
-                result_read = reader.read(conn.req.as_bytes()) => {
+                result_read = reader.read(conn.req.as_mut_bytes()) => {
                     let n = match result_read {
                         Ok(0) => {
                             println!("conn[{}:{:?}] closed", conn.sockfd, conn.remote);
