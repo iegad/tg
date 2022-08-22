@@ -19,7 +19,10 @@ async fn work() {
 
     'ntime: for i in 0..10000 {
         let mut pack = nw::pack::PACK_POOL.pull();
-        pack.set_pid(1);
+        pack.set_service_id(1);
+        pack.set_router_id(2);
+        pack.set_package_id(3);
+        pack.set_token(4);
         pack.set_idempotent(i + 1);
         pack.set_data(data);
 
@@ -43,6 +46,12 @@ async fn work() {
             let ok = rsp.parse(n).unwrap();
 
             if ok {
+                assert_eq!(rsp.service_id(), 1);
+                assert_eq!(rsp.router_id(), 2);
+                assert_eq!(rsp.package_id(), 3);
+                assert_eq!(rsp.idempotent(), 1 + i);
+                assert_eq!(rsp.raw_len(), pack.raw_len());
+                assert_eq!(rsp.token(), 4);
                 assert_eq!(STR, core::str::from_utf8(rsp.data()).unwrap());
                 break;
             }
