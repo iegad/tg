@@ -6,7 +6,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     select,
-    sync::mpsc,
+    sync::broadcast,
 };
 
 type Response = BytesMut;
@@ -19,7 +19,7 @@ lazy_static! {
 #[derive(Debug)]
 struct Conn {
     connfd: i32,
-    tx: Option<mpsc::Sender<Response>>,
+    tx: broadcast::Sender<Response>,
     remote: SocketAddr,
     local: SocketAddr,
 }
@@ -36,20 +36,21 @@ impl Clone for Conn {
 }
 
 impl Conn {
-    fn new(stream: &TcpStream, tx: mpsc::Sender<Response>) -> Self {
+    fn new(stream: &TcpStream) -> Self {
+        let (tx, _) = broadcast::channel(100);
+
         Self {
             connfd: stream.as_raw_fd(),
-            tx: Some(tx),
+            tx,
             remote: stream.peer_addr().unwrap(),
             local: stream.local_addr().unwrap(),
         }
     }
 
-    fn load(&mut self, stream: &TcpStream, tx: mpsc::Sender<Response>) {
+    fn load(&mut self, stream: &TcpStream) {
         self.remote = stream.peer_addr().unwrap();
         self.local = stream.local_addr().unwrap();
         self.connfd = stream.as_raw_fd();
-        self.tx = Some(tx);
     }
 
     fn connfd(&self) -> i32 {
@@ -68,8 +69,12 @@ impl Conn {
         &self.local
     }
 
-    fn sender(&self) -> mpsc::Sender<Response> {
-        self.tx.as_ref().unwrap().clone()
+    fn sender(&self) -> broadcast::Sender<Response> {
+        self.tx.clone()
+    }
+
+    fn receiver(&self) -> broadcast::Receiver<Response> {
+        self.tx.subscribe()
     }
 }
 
@@ -118,17 +123,18 @@ impl<T: Event> Server<T> {
 
     async fn conn_handle(mut stream: TcpStream, event: T) {
         let connfd = stream.as_raw_fd();
-        let (tx, mut rx) = mpsc::channel(100);
+
         let map = CONN_MAP.clone();
         if let None = map.get(&connfd) {
             println!("add conn [{}]", connfd);
-            map.insert(connfd, Conn::new(&stream, tx.clone()));
+            map.insert(connfd, Conn::new(&stream));
         }
 
         let conn = &mut map.get(&connfd).unwrap();
-        conn.load(&stream, tx);
+        conn.load(&stream);
 
         let (mut reader, mut writer) = stream.split();
+        let mut rx = conn.receiver();
 
         let mut rbuf = PACK_POOL
             .take_or_create(|| BytesMut::with_capacity(4096))
@@ -157,7 +163,7 @@ impl<T: Event> Server<T> {
                 }
 
                 result_rx = rx.recv() => {
-                    if let Some(v) = result_rx {
+                    if let Ok(v) = result_rx {
                         if let Err(err) = writer.write_all(&v[..v.len()]).await {
                             println!("write failed: {:?}", err);
                             break;
@@ -194,7 +200,7 @@ impl Event for Echo {
             if let Some(c) = &map.get(&(i as i32)) {
                 if c.valid() {
                     let tx = c.sender();
-                    tx.send(req.clone()).await.unwrap();
+                    tx.send(req.clone()).unwrap();
                 }
                 println!("conn[{}] => {}", c.connfd(), c.valid());
             }
