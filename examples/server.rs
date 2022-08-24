@@ -60,10 +60,6 @@ impl Conn {
         self.connfd > 0
     }
 
-    fn release(&mut self) {
-        self.connfd = 0;
-    }
-
     fn remote(&self) -> &SocketAddr {
         &self.remote
     }
@@ -172,9 +168,8 @@ impl<T: Event> Server<T> {
         }
 
         event.on_disconnected(&conn).await;
-
         PACK_POOL.put(rbuf).await;
-        conn.release();
+        map.remove(&connfd);
     }
 }
 
@@ -196,12 +191,13 @@ impl Event for Echo {
 
         println!(">>> map len: {}", n - 10);
         for i in 10..n {
-            let c = &map.get(&(i as i32)).unwrap();
-            if c.valid() {
-                let tx = c.sender();
-                tx.send(req.clone()).await.unwrap();
+            if let Some(c) = &map.get(&(i as i32)) {
+                if c.valid() {
+                    let tx = c.sender();
+                    tx.send(req.clone()).await.unwrap();
+                }
+                println!("conn[{}] => {}", c.connfd(), c.valid());
             }
-            println!("conn[{}] => {}", c.connfd(), c.valid());
         }
     }
 }
