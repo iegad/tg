@@ -1,3 +1,4 @@
+use async_cell::sync::AsyncCell;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use lazy_static::lazy_static;
@@ -13,26 +14,16 @@ type Response = BytesMut;
 
 lazy_static! {
     static ref PACK_POOL: async_object_pool::Pool<BytesMut> = async_object_pool::Pool::new(100000);
-    static ref CONN_MAP: Arc<cht::HashMap<i32, Conn>> = Arc::new(cht::HashMap::with_capacity(100));
+    static ref CONN_MAP: Arc<cht::HashMap<i32, Arc<Conn>>> =
+        Arc::new(cht::HashMap::with_capacity(100));
 }
 
 #[derive(Debug)]
 struct Conn {
-    connfd: i32,
+    connfd: AsyncCell<i32>,
     tx: broadcast::Sender<Response>,
-    remote: SocketAddr,
-    local: SocketAddr,
-}
-
-impl Clone for Conn {
-    fn clone(&self) -> Self {
-        Self {
-            connfd: self.connfd,
-            tx: self.tx.clone(),
-            remote: self.remote.clone(),
-            local: self.local.clone(),
-        }
-    }
+    remote: AsyncCell<SocketAddr>,
+    local: AsyncCell<SocketAddr>,
 }
 
 impl Conn {
@@ -40,33 +31,33 @@ impl Conn {
         let (tx, _) = broadcast::channel(100);
 
         Self {
-            connfd: stream.as_raw_fd(),
+            connfd: AsyncCell::new_with(stream.as_raw_fd()),
             tx,
-            remote: stream.peer_addr().unwrap(),
-            local: stream.local_addr().unwrap(),
+            remote: AsyncCell::new_with(stream.peer_addr().unwrap()),
+            local: AsyncCell::new_with(stream.local_addr().unwrap()),
         }
     }
 
-    fn load(&mut self, stream: &TcpStream) {
-        self.remote = stream.peer_addr().unwrap();
-        self.local = stream.local_addr().unwrap();
-        self.connfd = stream.as_raw_fd();
+    fn load(&self, stream: &TcpStream) {
+        self.remote.set(stream.peer_addr().unwrap());
+        self.local.set(stream.local_addr().unwrap());
+        self.connfd.set(stream.as_raw_fd());
     }
 
-    fn connfd(&self) -> i32 {
-        self.connfd
+    async fn connfd(&self) -> i32 {
+        self.connfd.get().await
     }
 
-    fn valid(&self) -> bool {
-        self.connfd > 0
+    async fn valid(&self) -> bool {
+        self.connfd.get().await > 0
     }
 
-    fn remote(&self) -> &SocketAddr {
-        &self.remote
+    async fn remote(&self) -> SocketAddr {
+        self.remote.get().await
     }
 
-    fn _local(&self) -> &SocketAddr {
-        &self.local
+    async fn _local(&self) -> SocketAddr {
+        self.local.get().await
     }
 
     fn sender(&self) -> broadcast::Sender<Response> {
@@ -90,11 +81,19 @@ trait Event: Send + Sync + Copy + 'static {
     }
 
     async fn on_connected(&self, conn: &Conn) {
-        println!("[{}|{:?}] has connected", conn.connfd(), conn.remote(),);
+        println!(
+            "[{}|{:?}] has connected",
+            conn.connfd().await,
+            conn.remote().await,
+        );
     }
 
     async fn on_disconnected(&self, conn: &Conn) {
-        println!("[{}|{:?}] has disconnected", conn.connfd(), conn.remote());
+        println!(
+            "[{}|{:?}] has disconnected",
+            conn.connfd().await,
+            conn.remote().await,
+        );
     }
 
     async fn on_message(&self, conn: &Conn, req: &BytesMut, n: usize);
@@ -127,7 +126,7 @@ impl<T: Event> Server<T> {
         let map = CONN_MAP.clone();
         if let None = map.get(&connfd) {
             println!("add conn [{}]", connfd);
-            map.insert(connfd, Conn::new(&stream));
+            map.insert(connfd, Arc::new(Conn::new(&stream)));
         }
 
         let conn = &mut map.get(&connfd).unwrap();
@@ -187,8 +186,8 @@ impl Event for Echo {
     async fn on_message(&self, conn: &Conn, req: &BytesMut, n: usize) {
         println!(
             "[{}|{}] => {}",
-            conn.connfd(),
-            conn.remote(),
+            conn.connfd().await,
+            conn.remote().await,
             core::str::from_utf8(&req[..n]).unwrap()
         );
 
@@ -198,11 +197,11 @@ impl Event for Echo {
         println!(">>> map len: {}", n - 10);
         for i in 10..n {
             if let Some(c) = &map.get(&(i as i32)) {
-                if c.valid() {
+                if c.valid().await {
                     let tx = c.sender();
                     tx.send(req.clone()).unwrap();
                 }
-                println!("conn[{}] => {}", c.connfd(), c.valid());
+                println!("conn[{}] => {}", c.connfd().await, c.valid().await);
             }
         }
     }
