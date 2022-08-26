@@ -145,7 +145,7 @@ pub const DEFAULT_CHAN_SIZE: usize = 100;
 pub const DEFAULT_READ_TIMEOUT: u64 = 60;
 
 /// 默认读缓冲区大小 1M
-pub const DEFAULT_BUF_SIZE: usize = 1024 * 1024;
+pub const DEFAULT_BUF_SIZE: usize = 1024 * 4;
 
 /// 包最大长度: 2G
 pub const MAX_PACK_SIZE: usize = i32::MAX as usize + 1;
