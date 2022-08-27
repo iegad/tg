@@ -108,6 +108,14 @@ pub enum Err {
 
     /// 消息包数据太长
     PackTooLong,
+
+    // ---------------------------------------------- piper 错误定义 ----------------------------------------------
+    //
+    //
+    // package id is invalid
+    PiperPIDInvalid,
+
+    PiperHandlerAreadyExists(u16),
 }
 
 /// 实现 println 的 Display特型
