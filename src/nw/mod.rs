@@ -3,6 +3,7 @@ pub mod pack;
 pub mod tcp;
 pub mod ws;
 
+use self::conn::Conn;
 use crate::g;
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -11,8 +12,6 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::Semaphore;
-
-use self::conn::Conn;
 
 // ----------------------------------- 工具函数 -----------------------------------
 //

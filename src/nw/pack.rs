@@ -30,7 +30,7 @@ lazy_static! {
 /// 消息头为定长 20 字节
 ///
 /// # 内存布局
-/// | [service_id] 2字节 | [package_id] 2字节 | [router_id] 4字节 | [idempotent] 4字节 | [token] 4字节 | [raw_len] 4字节 |
+/// | [service_id] 2字节 | [package_id] 2字节 | [router_id] 4字节 | [idempotent] 4字节 | [token] 4字节 | [len] 4字节 |
 ///
 /// ## service_id 服务ID
 ///
@@ -75,6 +75,7 @@ impl Package {
     /// 随着后期的调用, 原始数据长度为发生变化, 但决不会小于 [Pack::RAW_SIZE].
     pub const DEFAULT_RAW_SIZE: usize = 4096;
     pub const HEAD_SIZE: usize = 20;
+    pub const MAX_SIZE: usize = 1024 * 1024 * 1024;
     const HEAD_KEY_16: u16 = 0xFBFA;
     const HEAD_KEY_32: u32 = 0xFFFEFDFC;
 
@@ -125,6 +126,48 @@ impl Package {
     /// 未成功转换为一个完整的包(后续还需要追加码流才能成功完整的Package) 返回 false.
     ///
     /// 无效的码流, 返回相应错误.
+    pub fn parse_buf(&mut self, buf: &mut BytesMut) -> g::Result<bool> {
+        let ptr = buf.as_ptr();
+        let mut pos = 0;
+        let len = buf.len();
+        if self.pos == 0 {
+            pos = Self::HEAD_SIZE;
+
+            unsafe {
+                self.service_id = *(ptr as *const u16) ^ Self::HEAD_KEY_16;
+                self.package_id = *(ptr.add(2) as *const u16) ^ Self::HEAD_KEY_16;
+                self.router_id = *(ptr.add(4) as *const u32) ^ Self::HEAD_KEY_32;
+                self.idempotent = *(ptr.add(8) as *const u32) ^ Self::HEAD_KEY_32;
+                self.token = *(ptr.add(12) as *const u32) ^ Self::HEAD_KEY_32;
+                self.len = (*(ptr.add(16) as *const u32) ^ Self::HEAD_KEY_32) as usize;
+            }
+
+            if self.len > Self::MAX_SIZE {
+                return Err(g::Err::PackTooLong);
+            }
+
+            if self.data.capacity() < self.len {
+                self.data.resize(self.len, 0);
+            }
+        }
+
+        let body_len = len - pos;
+        self.data[self.pos..self.pos + body_len].copy_from_slice(&buf[pos..len]);
+        self.pos += body_len;
+
+        if self.pos > self.len {
+            return Err(g::Err::PackTooLong);
+        }
+
+        let res = self.pos == self.len;
+        if res {
+            self.pos = 0
+        }
+
+        buf.clear();
+        Ok(res)
+    }
+
     pub fn parse(&mut self, buf: &[u8]) -> g::Result<bool> {
         let ptr = buf.as_ptr();
         let mut pos = 0;
@@ -141,12 +184,16 @@ impl Package {
                 self.len = (*(ptr.add(16) as *const u32) ^ Self::HEAD_KEY_32) as usize;
             }
 
+            if self.len > Self::MAX_SIZE {
+                return Err(g::Err::PackTooLong);
+            }
+
             if self.data.capacity() < self.len {
                 self.data.resize(self.len, 0);
             }
         }
 
-        self.data[self.pos..self.len].copy_from_slice(&buf[pos..len]);
+        self.data[self.pos..self.pos + len - pos].copy_from_slice(&buf[pos..len]);
         self.pos += len - pos;
 
         if self.pos > self.len {
@@ -285,11 +332,11 @@ mod pcomp_tester {
         assert_eq!(p1.data().len(), s.len());
         assert_eq!(s, core::str::from_utf8(p1.data()).unwrap());
 
-        let wbuf = p1.to_bytes();
+        let mut wbuf = p1.to_bytes();
         println!("{}", utils::bytes_to_hex(&wbuf));
 
         let mut p2 = PACK_POOL.pull();
-        assert!(p2.parse(&wbuf).unwrap());
+        assert!(p2.parse_buf(&mut wbuf).unwrap());
 
         assert_eq!(p1.service_id(), p2.service_id());
         assert_eq!(p1.router_id(), p2.router_id());

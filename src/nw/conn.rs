@@ -32,7 +32,7 @@ impl Conn {
             tx,
             remote: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
             local: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
-            rbuf: BytesMut::new(),
+            rbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
         }
     }
 
@@ -46,7 +46,7 @@ impl Conn {
             tx,
             remote: stream.peer_addr().unwrap(),
             local: stream.local_addr().unwrap(),
-            rbuf: BytesMut::new(),
+            rbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
         }
     }
 

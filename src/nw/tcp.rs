@@ -122,7 +122,7 @@ async fn conn_handle<TProc>(
 
             // 消息接收句柄
             result_read = reader.read_buf(conn.rbuf_mut()) => {
-                let n = match result_read {
+                match result_read {
                     Ok(0) => {
                         println!("conn[{}:{:?}] closed", conn.sockfd(), conn.remote());
                         break 'conn_loop;
@@ -136,7 +136,7 @@ async fn conn_handle<TProc>(
                     }
                 };
 
-                let ok = match req.parse(&conn.rbuf()[..n]) {
+                let ok = match req.parse_buf(conn.rbuf_mut()) {
                     Err(err) => {
                         proc.on_conn_error(&*conn, err).await;
                         break 'conn_loop;
@@ -144,8 +144,6 @@ async fn conn_handle<TProc>(
 
                     Ok(v) => v,
                 };
-
-                conn.rbuf_mut().clear();
 
                 if ok {
                     conn.recv_seq_incr();
@@ -170,7 +168,7 @@ pub async fn read(
     pack: &mut pack::Package,
 ) -> g::Result<usize> {
     loop {
-        let n = match sock.read_buf(rbuf).await {
+        match sock.read_buf(rbuf).await {
             Ok(0) => {
                 return Ok(0);
             }
@@ -181,6 +179,8 @@ pub async fn read(
             }
         };
 
-        return Ok(if pack.parse(&rbuf[..n])? { 1 } else { 0 });
+        if pack.parse_buf(rbuf)? {
+            return Ok(1);
+        }
     }
 }

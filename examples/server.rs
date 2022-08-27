@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use bytes::BytesMut;
 use tg::nw::tcp;
+// use tg::utils;
 use tg::{
     g,
     nw::{self},
@@ -17,8 +18,7 @@ impl nw::IProc for EchoProc {
         req: &nw::pack::Package,
     ) -> g::Result<BytesMut> {
         // println!(
-        //     "[{}]from conn[{}:{:?}] => idempotent: {}, {}",
-        //     thread_id::get(),
+        //     "from conn[{}:{:?}] => idempotent: {}, {}",
         //     conn.sockfd(),
         //     conn.remote(),
         //     req.idempotent(),
@@ -26,6 +26,7 @@ impl nw::IProc for EchoProc {
         // );
 
         let wbuf = req.to_bytes();
+        // println!("{}", utils::bytes_to_hex(&wbuf));
         Ok(wbuf)
     }
 }
