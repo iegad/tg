@@ -9,7 +9,7 @@
 
 use crate::g;
 use bytes::BytesMut;
-use core::slice::from_raw_parts;
+use core::{fmt, slice::from_raw_parts};
 use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
 use std::sync::Arc;
@@ -315,6 +315,22 @@ impl Package {
 
     pub fn set_token(&mut self, token: u32) {
         self.token = token;
+    }
+}
+
+impl fmt::Display for Package {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "SID[{}], PID[{}], RID[{}], IDE[{}], TOK[{}], LEN[{}], DATA{:?}",
+            self.service_id,
+            self.package_id,
+            self.router_id,
+            self.idempotent,
+            self.token,
+            self.len,
+            self.data(),
+        )
     }
 }
 

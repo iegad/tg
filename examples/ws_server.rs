@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bytes::BytesMut;
-use tg::nw::tcp;
+use tg::nw::ws;
 use tg::{
     g,
     nw::{self},
@@ -36,5 +36,5 @@ async fn main() -> g::Result<()> {
         Ok(s) => s,
     };
 
-    Ok(tcp::run(&server, EchoProc {}).await)
+    Ok(ws::run(&server, EchoProc {}).await)
 }

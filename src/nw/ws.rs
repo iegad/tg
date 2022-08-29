@@ -93,6 +93,8 @@ async fn conn_handle<TProc>(
     let mut req = pack::PACK_POOL.pull();
 
     'conn_loop: loop {
+        timeout_ticker.reset();
+
         select! {
             _ = notify_shutdown.recv() => {
                 println!("server is shutdown");
@@ -158,9 +160,6 @@ async fn conn_handle<TProc>(
                         }
                     }
 
-                    Message::Ping(_) => {}
-                    Message::Pong(_) => {}
-
                     Message::Text(_) => {
                         proc.on_conn_error(&*conn, g::Err::TcpReadFailed("wsReadFailed: text".to_string())).await;
                         break 'conn_loop;
@@ -170,7 +169,7 @@ async fn conn_handle<TProc>(
                         break 'conn_loop;
                     }
 
-                    Message::Frame(_) => {}
+                    _ => {}
                 }
             }
         }
