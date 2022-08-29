@@ -112,9 +112,10 @@ pub enum Err {
     // ---------------------------------------------- piper 错误定义 ----------------------------------------------
     //
     //
-    // package id is invalid
+    /// package id 无效
     PiperPIDInvalid,
 
+    /// 已存在(package id)句柄
     PiperHandlerAreadyExists(u16),
 }
 

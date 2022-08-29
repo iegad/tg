@@ -23,6 +23,9 @@ lazy_static! {
     /// let mut p1 = tg::nw::pack::PACK_POOL.pull();
     /// ```
     pub static ref PACK_POOL: Arc<PackagePool> = Arc::new(PackagePool::new(|| Package::new(), |v| {v.pos = 0;}));
+
+    pub static ref REQ_POOL: Arc<PackagePool> = Arc::new(PackagePool::new(|| Package::new(), |v| {v.pos = 0;}));
+    pub static ref RSP_POOL: Arc<PackagePool> = Arc::new(PackagePool::new(|| Package::new(), |v| {v.pos = 0;}));
 }
 
 /// 消息头
@@ -48,7 +51,7 @@ lazy_static! {
 ///
 /// 幂等, 用于检测包是否为重复包.
 ///
-/// ## raw_len
+/// ## len
 ///
 /// 消息长度, 消息原始长度 消息头[10 bytes] + 消息体[N bytes].
 ///

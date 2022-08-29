@@ -71,7 +71,7 @@ async fn conn_handle<TProc>(
     TProc: IProc,
 {
     let mut conn = CONN_POOL.pull();
-    conn.from_with(&stream);
+    conn.init(&stream);
 
     let ws_stream = match accept_async(stream).await {
         Ok(s) => s,

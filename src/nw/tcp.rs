@@ -1,6 +1,7 @@
 use super::{conn::CONN_POOL, pack, IProc, Server};
 use crate::g;
 use bytes::BytesMut;
+use lockfree_object_pool::LinearObjectPool;
 use std::{net::SocketAddr, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -8,6 +9,10 @@ use tokio::{
     select, signal,
     sync::broadcast,
 };
+
+lazy_static::lazy_static! {
+    static ref RBUF_POOL: LinearObjectPool<BytesMut> = LinearObjectPool::new(||BytesMut::with_capacity(g::DEFAULT_BUF_SIZE), |v|{v.clear()});
+}
 
 /// # run
 ///
@@ -78,7 +83,7 @@ async fn conn_handle<TProc>(
     TProc: IProc,
 {
     let mut conn = CONN_POOL.pull();
-    conn.from_with(&stream);
+    conn.init(&stream);
 
     if let Err(err) = proc.on_connected(&*conn).await {
         println!("proc.on_connected failed: {:?}", err);
@@ -162,13 +167,10 @@ async fn conn_handle<TProc>(
     proc.on_disconnected(&*conn).await;
 }
 
-pub async fn read(
-    sock: &mut TcpStream,
-    rbuf: &mut BytesMut,
-    pack: &mut pack::Package,
-) -> g::Result<usize> {
+pub async fn read(sock: &mut TcpStream, pack: &mut pack::Package) -> g::Result<usize> {
+    let mut rbuf = RBUF_POOL.pull();
     loop {
-        match sock.read_buf(rbuf).await {
+        match sock.read_buf(&mut *rbuf).await {
             Ok(0) => {
                 return Ok(0);
             }
@@ -179,7 +181,7 @@ pub async fn read(
             }
         };
 
-        if pack.parse_buf(rbuf)? {
+        if pack.parse_buf(&mut rbuf)? {
             return Ok(1);
         }
     }

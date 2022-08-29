@@ -1,9 +1,7 @@
-use bytes::BytesMut;
-use tg::{g, nw::pack::PACK_POOL};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
-};
+use tg::{g, nw::pack::RSP_POOL};
+use tokio::net::TcpStream;
+
+static DATA: &[u8; 11] = b"Hello world";
 
 #[tokio::main]
 async fn main() -> g::Result<()> {
@@ -11,19 +9,37 @@ async fn main() -> g::Result<()> {
 
     let mut conn = TcpStream::connect("127.0.0.1:6688").await.unwrap();
 
-    let mut req = PACK_POOL.pull();
-    req.set_service_id(1);
-    req.set_package_id(1);
-    req.set_data(b"Hello world");
+    for i in 0..1000 {
+        match tg::piper::call(&mut conn, 1, 1, 0, i + 1, 1, DATA).await {
+            Err(err) => {
+                println!("{:?}", err);
+                break;
+            }
 
-    conn.write_all(&req.to_bytes()).await.unwrap();
+            Ok(None) => {
+                println!("-- EOF --");
+                break;
+            }
 
-    let mut rbuf = BytesMut::with_capacity(g::DEFAULT_BUF_SIZE);
-    let _n = conn.read_buf(&mut rbuf).await.unwrap();
-    let mut rsp = PACK_POOL.pull();
-    let _res = rsp.parse(&rbuf).unwrap();
+            Ok(v) => {
+                let v = v.unwrap();
+                let mut rsp = RSP_POOL.pull();
+                let res = match rsp.parse(&v) {
+                    Ok(res) => res,
+                    Err(err) => {
+                        println!("{:?}", err);
+                        break;
+                    }
+                };
 
-    println!("{}", core::str::from_utf8(rsp.data()).unwrap());
+                if !res {
+                    panic!("oh shit....");
+                }
+
+                println!("{}", core::str::from_utf8(rsp.data()).unwrap());
+            }
+        }
+    }
 
     println!("done.... 耗时 {} ms", tg::utils::now_unix_micros() - beg);
     Ok(())
