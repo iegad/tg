@@ -386,16 +386,16 @@ impl Pack {
 }
 
 fn main() {
-    let beg = utils::now_unix_micros();
     let mut rawlen = 0;
+
+    let beg = utils::now_unix_micros();
     for _ in 0..10000 {
-        // let mut p1 = PB_POOL.pull();
-        let mut p1 = Package::new();
-        p1.service_id = 10000;
-        p1.package_id = 20000;
-        p1.router_id = 30000;
-        p1.idempotent = 40000;
-        p1.token = 50000;
+        let mut p1 = PB_POOL.pull();
+        p1.service_id = 1;
+        p1.package_id = 2;
+        p1.router_id = 3;
+        p1.idempotent = 4;
+        p1.token = 5;
         p1.len = 11;
         p1.data = b"Hello world".to_vec();
 
@@ -426,7 +426,8 @@ fn main() {
         let buf = p1.to_bytes();
         rawlen = buf.len();
         let mut p2 = pack::PACK_POOL.pull();
-        assert!(p2.parse(&buf).unwrap());
+        p2.rbuf_mut().extend_from_slice(&buf);
+        assert!(p2.parse().unwrap());
         assert_eq!(p1.service_id(), p2.service_id());
         assert_eq!(p1.package_id(), p2.package_id());
         assert_eq!(p1.router_id(), p2.router_id());
@@ -439,7 +440,6 @@ fn main() {
     println!("custom 总耗时 {} micro seconds, len: {}", utils::now_unix_micros() - beg, rawlen);
 
     let beg = utils::now_unix_micros();
-    let mut rawlen = 0;
     for _ in 0..10000 {
         let mut p1 = Pack::new();
         p1.service_id = 10000;

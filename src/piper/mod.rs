@@ -81,8 +81,13 @@ pub async fn call(
 
     let mut rsp = RSP_POOL.pull();
     match tcp::read(sock, &mut rsp).await {
-        Ok(0) => return Ok(None),
-        Ok(_) => return Ok(Some(rsp.to_bytes())),
+        Ok(v) => {
+            if v {
+                return Ok(Some(rsp.to_bytes()));
+            } else {
+                return Ok(None);
+            }
+        }
         Err(err) => return Err(err),
     }
 }

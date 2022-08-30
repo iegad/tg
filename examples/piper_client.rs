@@ -24,7 +24,8 @@ async fn main() -> g::Result<()> {
             Ok(v) => {
                 let v = v.unwrap();
                 let mut rsp = RSP_POOL.pull();
-                let res = match rsp.parse(&v) {
+                rsp.rbuf_mut().extend_from_slice(&v);
+                let res = match rsp.parse() {
                     Ok(res) => res,
                     Err(err) => {
                         println!("{:?}", err);

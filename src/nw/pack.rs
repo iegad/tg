@@ -12,8 +12,8 @@ use bytes::BytesMut;
 use core::{fmt, slice::from_raw_parts};
 use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
-use std::sync::Arc;
 
+type PackagePool = LinearObjectPool<Package>;
 lazy_static! {
     /// Package 对象池
     ///
@@ -22,10 +22,9 @@ lazy_static! {
     /// ```
     /// let mut p1 = tg::nw::pack::PACK_POOL.pull();
     /// ```
-    pub static ref PACK_POOL: Arc<PackagePool> = Arc::new(PackagePool::new(|| Package::new(), |v| {v.pos = 0;}));
-
-    pub static ref REQ_POOL: Arc<PackagePool> = Arc::new(PackagePool::new(|| Package::new(), |v| {v.pos = 0;}));
-    pub static ref RSP_POOL: Arc<PackagePool> = Arc::new(PackagePool::new(|| Package::new(), |v| {v.pos = 0;}));
+    pub static ref PACK_POOL: PackagePool = PackagePool::new(|| Package::new(), |v| {v.pos = 0;});
+    pub static ref REQ_POOL: PackagePool = PackagePool::new(|| Package::new(), |v| {v.pos = 0;});
+    pub static ref RSP_POOL: PackagePool = PackagePool::new(|| Package::new(), |v| {v.pos = 0;});
 }
 
 /// 消息头
@@ -39,13 +38,13 @@ lazy_static! {
 ///
 /// 每个服务都有一个 2字节ID
 ///
-/// ## router_id 路由ID
-///
-/// 分布式中, 同一个service会有多个服务, router_id用于区分, 服务节点
-///
 /// ## package_id 消息ID
 ///
 /// 用于区分消息包类型, 跟据此字段来处理消息请求
+///
+/// ## router_id 路由ID
+///
+/// 分布式中, 同一个service会有多个服务, router_id用于确定服务节点
 ///
 /// ## idempotent 幂等
 ///
@@ -53,25 +52,31 @@ lazy_static! {
 ///
 /// ## len
 ///
-/// 消息长度, 消息原始长度 消息头[10 bytes] + 消息体[N bytes].
+/// 消息长度, 消息体长度.
 ///
 /// ## token
 ///
 /// 用于检测客户端是否合法
 pub struct Package {
-    service_id: u16,
-    package_id: u16,
-    router_id: u32,
-    idempotent: u32,
-    token: u32,
-    len: usize,
-    data: Vec<u8>,
+    // ---------------------------------------
+    // 原数据定义
+    service_id: u16, // 服务ID, 用于确定是哪个服务
+    package_id: u16, // 包ID, 用于确定服务中的句柄
+    router_id: u32,  // 路由ID, 用于确定服务节点
+    idempotent: u32, // 幂等, 用于确定消息是否重复
+    token: u32,      // token, 用于检查客户端是否合法
+    len: usize,      // 消息体长度
+    data: Vec<u8>,   // 消息体
 
-    pos: usize,
-    wbuf: BytesMut,
+    // ---------------------------------------
+    // 扩展数据定义
+    pos: usize, // 已读数据, 通常表示 data可以写入的位置.
+
+    // 缓冲区
+    // * 当消息为 Request 时, buf为读缓冲区.
+    // * 当消息为 Response时, buf为写缓冲区.
+    buf: BytesMut,
 }
-
-type PackagePool = LinearObjectPool<Package>;
 
 impl Package {
     /// Package 原始数据初始化长度.
@@ -94,7 +99,7 @@ impl Package {
             data: vec![0u8; g::DEFAULT_BUF_SIZE],
 
             pos: 0,
-            wbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
+            buf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
         }
     }
 
@@ -118,23 +123,30 @@ impl Package {
             data: data.to_vec(),
 
             pos: 0,
-            wbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
+            buf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
         }
     }
 
-    /// 将 self.raw[..n] 转换为 package.
+    /// 通过 buf 来构建 package
     ///
     /// 成功转换为一个完整的包返回 true.
     ///
     /// 未成功转换为一个完整的包(后续还需要追加码流才能成功完整的Package) 返回 false.
     ///
     /// 无效的码流, 返回相应错误.
-    pub fn parse_buf(&mut self, buf: &mut BytesMut) -> g::Result<bool> {
+    pub fn parse_buf(&mut self, buf: &[u8]) -> g::Result<bool> {
+        let buflen = buf.len();
+
+        if buflen < Self::HEAD_SIZE {
+            return Err(g::Err::PackHeadInvalid("head size is invalid"));
+        }
+
         let ptr = buf.as_ptr();
-        let mut pos = 0;
-        let len = buf.len();
+        let mut bufpos = 0;
+
         if self.pos == 0 {
-            pos = Self::HEAD_SIZE;
+            // 当第一次读到消息时, 先解析消息头, 并且bufpos 的位置偏移 Self::HEAD_SIZE.
+            bufpos = Self::HEAD_SIZE;
 
             unsafe {
                 self.service_id = *(ptr as *const u16) ^ Self::HEAD_KEY_16;
@@ -154,9 +166,9 @@ impl Package {
             }
         }
 
-        let body_len = len - pos;
-        self.data[self.pos..self.pos + body_len].copy_from_slice(&buf[pos..len]);
-        self.pos += body_len;
+        let data_len = buflen - bufpos;
+        self.data[self.pos..self.pos + data_len].copy_from_slice(&buf[bufpos..buflen]);
+        self.pos += data_len;
 
         if self.pos > self.len {
             return Err(g::Err::PackTooLong);
@@ -167,16 +179,28 @@ impl Package {
             self.pos = 0
         }
 
-        buf.clear();
         Ok(res)
     }
 
-    pub fn parse(&mut self, buf: &[u8]) -> g::Result<bool> {
-        let ptr = buf.as_ptr();
-        let mut pos = 0;
-        let len = buf.len();
+    /// 通过package 内置缓冲区来构建 package
+    ///
+    /// 成功转换为一个完整的包返回 true.
+    ///
+    /// 未成功转换为一个完整的包(后续还需要追加码流才能成功完整的Package) 返回 false.
+    ///
+    /// 无效的码流, 返回相应错误.
+    pub fn parse(&mut self) -> g::Result<bool> {
+        let buflen = self.buf.len();
+
+        if buflen < Self::HEAD_SIZE {
+            return Err(g::Err::PackHeadInvalid("head size is invalid"));
+        }
+
+        let mut bufpos = 0;
+        let ptr = self.buf.as_ptr();
+
         if self.pos == 0 {
-            pos = Self::HEAD_SIZE;
+            bufpos = Self::HEAD_SIZE;
 
             unsafe {
                 self.service_id = *(ptr as *const u16) ^ Self::HEAD_KEY_16;
@@ -196,8 +220,9 @@ impl Package {
             }
         }
 
-        self.data[self.pos..self.pos + len - pos].copy_from_slice(&buf[pos..len]);
-        self.pos += len - pos;
+        let datalen = buflen - bufpos;
+        self.data[self.pos..self.pos + datalen].copy_from_slice(&self.buf[bufpos..buflen]);
+        self.pos += datalen;
 
         if self.pos > self.len {
             return Err(g::Err::PackTooLong);
@@ -208,17 +233,18 @@ impl Package {
             self.pos = 0
         }
 
+        self.buf.clear();
         Ok(res)
     }
 
-    /// 返回源始码流
+    /// 将 package 序列化为 BytesMut
     pub fn to_bytes(&self) -> BytesMut {
-        let mut wbuf = self.wbuf.clone();
+        let mut wbuf = self.buf.clone();
         wbuf.clear();
-        let len = self.len + Self::HEAD_SIZE;
+        let buflen = self.len + Self::HEAD_SIZE;
 
-        if wbuf.capacity() < len {
-            wbuf.resize(len, 0);
+        if wbuf.capacity() < buflen {
+            wbuf.resize(buflen, 0);
         }
 
         unsafe {
@@ -253,7 +279,7 @@ impl Package {
             ));
         }
 
-        wbuf[Self::HEAD_SIZE..len].copy_from_slice(&self.data());
+        wbuf[Self::HEAD_SIZE..buflen].copy_from_slice(self.data());
         wbuf
     }
 
@@ -267,23 +293,27 @@ impl Package {
         self.service_id = service_id
     }
 
+    /// 获取 router_id
     pub fn router_id(&self) -> u32 {
         self.router_id
     }
 
+    /// 设置 router_id
     pub fn set_router_id(&mut self, router_id: u32) {
         self.router_id = router_id;
     }
 
+    /// 获取 package_id
     pub fn package_id(&self) -> u16 {
         self.package_id
     }
 
+    /// 设置 package_id
     pub fn set_package_id(&mut self, package_id: u16) {
         self.package_id = package_id;
     }
 
-    /// 返回 幂等
+    /// 获取 幂等
     pub fn idempotent(&self) -> u32 {
         self.idempotent
     }
@@ -309,12 +339,24 @@ impl Package {
         self.len = len;
     }
 
+    /// 获取 token
     pub fn token(&self) -> u32 {
         self.token
     }
 
+    /// 设置 token
     pub fn set_token(&mut self, token: u32) {
         self.token = token;
+    }
+
+    /// 获取 缓冲区 的可变引用
+    pub fn rbuf_mut(&mut self) -> &mut BytesMut {
+        &mut self.buf
+    }
+
+    /// 获取 缓冲区的不可变引用
+    pub fn rbuf(&self) -> &BytesMut {
+        &self.buf
     }
 }
 
@@ -335,7 +377,7 @@ impl fmt::Display for Package {
 }
 
 #[cfg(test)]
-mod pcomp_tester {
+mod package_tester {
     use super::Package;
     use crate::{nw::pack::PACK_POOL, utils};
 

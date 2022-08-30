@@ -38,7 +38,7 @@ async fn work() {
 
         match msg {
             Message::Binary(v) => {
-                assert!(rsp.parse(&v).unwrap());
+                assert!(rsp.parse_buf(&v).unwrap());
                 assert_eq!(rsp.service_id(), 1);
                 assert_eq!(rsp.router_id(), 2);
                 assert_eq!(rsp.package_id(), 3);

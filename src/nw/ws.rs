@@ -53,6 +53,7 @@ where
                 }
             }
 
+            // 关停句柄
             _ = shutdown.recv() => {
                 break 'server_loop;
             }
@@ -138,7 +139,7 @@ async fn conn_handle<TProc>(
 
                 match msg {
                     Message::Binary(v) => {
-                        let ok = match req.parse(&v) {
+                        let ok = match req.parse_buf(&v) {
                             Err(err) => {
                                 proc.on_conn_error(&*conn, g::Err::TcpReadFailed(format!("wsReadFailed: {:?}", err))).await;
                                 break 'conn_loop;

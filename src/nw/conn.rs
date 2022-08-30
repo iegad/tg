@@ -15,12 +15,12 @@ lazy_static::lazy_static! {
 /// 连接会话, 用于 server端
 pub struct Conn {
     sockfd: i32,                     // 套接字描述符
+    idempotent: u32,                 // 幂等
     send_seq: u32,                   // 发送序列
     recv_seq: u32,                   // 接收序列
     tx: broadcast::Sender<BytesMut>, // 消息发送管道的消息生产者
     remote: SocketAddr,              // 远端地址
     local: SocketAddr,               // 本端地址
-    rbuf: BytesMut,                  // 读缓冲区
 }
 
 impl Conn {
@@ -30,12 +30,12 @@ impl Conn {
 
         Self {
             sockfd: 0,
+            idempotent: 0,
             send_seq: 0,
             recv_seq: 0,
             tx,
             remote: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
             local: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0),
-            rbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
         }
     }
 
@@ -45,12 +45,12 @@ impl Conn {
 
         Self {
             sockfd: stream.as_raw_fd(),
+            idempotent: 0,
             send_seq: 0,
             recv_seq: 0,
             tx,
             remote: stream.peer_addr().unwrap(),
             local: stream.local_addr().unwrap(),
-            rbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
         }
     }
 
@@ -81,14 +81,14 @@ impl Conn {
         self.sockfd
     }
 
-    /// 获取Conn 读缓冲区 mut
-    pub fn rbuf_mut(&mut self) -> &mut BytesMut {
-        &mut self.rbuf
+    // 获取幂等
+    pub fn idempotent(&self) -> u32 {
+        self.idempotent
     }
 
-    /// 获取Conn 读缓冲区
-    pub fn rbuf(&self) -> &BytesMut {
-        &self.rbuf
+    // 设置幂等
+    pub fn set_idempotent(&mut self, idempotent: u32) {
+        self.idempotent = idempotent
     }
 
     /// 获取远端地址
@@ -104,6 +104,7 @@ impl Conn {
     /// 重置 Conn实例
     pub fn reset(&mut self) {
         self.sockfd = 0;
+        self.idempotent = 0;
     }
 
     /// 获取发送序列
