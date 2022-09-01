@@ -97,6 +97,8 @@ pub enum Err {
     /// 设置套接字选项失败
     TcpSetOptionFailed(&'static str),
 
+    TcpConnectFailed(String),
+
     // ---------------------------------------------- pack 错误定义 ----------------------------------------------
     //
     //
@@ -148,7 +150,7 @@ pub type Result<T> = std::result::Result<T, Err>;
 pub const DEFAULT_MAX_CONNECTIONS: usize = 1000;
 
 /// 管道默认长度: 100
-pub const DEFAULT_CHAN_SIZE: usize = 100;
+pub const DEFAULT_CHAN_SIZE: usize = 10000;
 
 /// 默认读超时值 60秒
 pub const DEFAULT_READ_TIMEOUT: u64 = 60;

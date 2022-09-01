@@ -10,12 +10,12 @@ use tg::{
 struct EchoProc;
 
 #[async_trait]
-impl nw::IProc for EchoProc {
+impl nw::ISvrProc for EchoProc {
     async fn on_process(
         &self,
         _conn: &nw::conn::Conn,
         req: &nw::pack::Package,
-    ) -> g::Result<BytesMut> {
+    ) -> g::Result<Option<BytesMut>> {
         // println!(
         //     "from conn[{}:{:?}] => idempotent: {}, {}",
         //     conn.sockfd(),
@@ -25,7 +25,7 @@ impl nw::IProc for EchoProc {
         // );
 
         let wbuf = req.to_bytes();
-        Ok(wbuf)
+        Ok(Some(wbuf))
     }
 }
 
@@ -36,5 +36,5 @@ async fn main() -> g::Result<()> {
         Ok(s) => s,
     };
 
-    Ok(tcp::run(&server, EchoProc {}).await)
+    Ok(tcp::server_run(&server, EchoProc {}).await)
 }

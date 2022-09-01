@@ -1,4 +1,8 @@
-use super::{conn::CONN_POOL, pack, IProc, Server};
+use super::{
+    conn,
+    pack::{self},
+    ICliProc, Server,
+};
 use crate::g;
 use bytes::BytesMut;
 use lockfree_object_pool::LinearObjectPool;
@@ -16,12 +20,8 @@ lazy_static::lazy_static! {
 }
 
 /// 运行 tcp server
-pub async fn run<TProc>(server: &Server, proc: TProc)
-where
-    TProc: IProc,
-{
+pub async fn server_run<TProc: super::ISvrProc>(server: &Server, proc: TProc) {
     proc.on_init(server).await;
-
     // step 1: 构建 tcp listener
     let listener = match TcpListener::bind(server.host).await {
         Ok(l) => l,
@@ -79,16 +79,14 @@ where
 }
 
 // tcp conn 句柄
-async fn conn_handle<TProc>(
+async fn conn_handle<TProc: super::ISvrProc>(
     mut stream: TcpStream,
     _addr: SocketAddr,
     proc: TProc,
     mut notify_shutdown: broadcast::Receiver<u8>,
-) where
-    TProc: IProc,
-{
+) {
     // step 1: 初始化 connection
-    let mut conn = CONN_POOL.pull();
+    let mut conn = conn::CONN_POOL.pull();
     conn.init(&stream);
 
     if let Err(err) = proc.on_connected(&*conn).await {
@@ -134,24 +132,28 @@ async fn conn_handle<TProc>(
                     proc.on_conn_error(&conn, g::Err::TcpWriteFailed(format!("write failed: {:?}", err))).await;
                     break 'conn_loop;
                 }
+
+                conn.send_seq_incr();
             }
 
             // 消息接收句柄
             result_read = reader.read_buf(req.rbuf_mut()) => {
                 match result_read {
                     // EOF
-                    Ok(0) => {
-                        println!("conn[{}:{:?}] closed", conn.sockfd(), conn.remote());
-                        break 'conn_loop;
-                    }
+                    Ok(0) => break 'conn_loop,
 
                     // IO错误 或 非法 消息
-                    Ok(n) if n < pack::Package::HEAD_SIZE => {} | Err(err) => {
+                    Ok(n) => {
+                        if n < pack::Package::HEAD_SIZE {
+                            proc.on_conn_error(&conn, g::Err::PackHeadInvalid("head size is invalid")).await;
+                            break 'conn_loop;
+                        }
+                    }
+
+                    Err(err) => {
                         proc.on_conn_error(&conn, g::Err::TcpReadFailed(format!("read failed: {:?}", err))).await;
                         break 'conn_loop;
                     }
-
-                    Ok(_) => {},
                 };
 
                 match req.parse() {
@@ -168,15 +170,17 @@ async fn conn_handle<TProc>(
 
                             conn.recv_seq_incr();
 
-                            let wbuf = match proc.on_process(&conn, &req).await {
+                            let some_wbuf = match proc.on_process(&conn, &req).await {
                                 Err(_) => break 'conn_loop,
                                 Ok(v) => v,
                             };
 
                             conn.set_idempotent(req.idempotent());
 
-                            if let Err(err) = tx.send(wbuf) {
-                                panic!("write channel[mpsc] send failed: {}", err);
+                            if let Some(wbuf) = some_wbuf {
+                                if let Err(err) = tx.send(wbuf) {
+                                    panic!("write channel[mpsc] send failed: {}", err);
+                                }
                             }
                         }
                     },
@@ -210,5 +214,116 @@ pub async fn read(sock: &mut TcpStream, pack: &mut pack::Package) -> g::Result<b
             return Ok(true);
         }
         rbuf.clear();
+    }
+}
+
+pub struct Client {
+    idempotent: u32,
+    send_seq: u32,
+    recv_seq: u32,
+    stream: TcpStream,
+    tx: broadcast::Sender<BytesMut>,
+}
+
+impl Client {
+    pub async fn new(host: &str) -> g::Result<Self> {
+        let stream = match TcpStream::connect(host).await {
+            Err(err) => return Err(g::Err::TcpConnectFailed(format!("{:?}", err))),
+            Ok(v) => v,
+        };
+
+        let (tx, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
+        Ok(Self {
+            idempotent: 0,
+            send_seq: 0,
+            recv_seq: 0,
+            stream,
+            tx,
+        })
+    }
+
+    pub fn idempotent(&self) -> u32 {
+        self.idempotent
+    }
+
+    pub fn send_seq(&self) -> u32 {
+        self.send_seq
+    }
+
+    pub fn recv_seq(&self) -> u32 {
+        self.recv_seq
+    }
+
+    pub fn stream_mut(&mut self) -> &TcpStream {
+        &self.stream
+    }
+
+    pub fn sender(&self) -> broadcast::Sender<BytesMut> {
+        self.tx.clone()
+    }
+
+    pub fn receiver(&self) -> broadcast::Receiver<BytesMut> {
+        self.tx.subscribe()
+    }
+}
+
+pub async fn client_run<TProc: ICliProc>(
+    mut cli: Client,
+    mut shutdown: broadcast::Receiver<u8>,
+    proc: TProc,
+) {
+    let tx = cli.sender();
+    let mut rx = cli.receiver();
+    let (mut reader, mut writer) = cli.stream.split();
+    let mut req = pack::PACK_POOL.pull();
+
+    'cli_loop: loop {
+        select! {
+            _ = shutdown.recv() => break 'cli_loop,
+
+            result_wbuf = rx.recv() => {
+                let wbuf = match result_wbuf {
+                    Ok(v) => v,
+                    Err(err) => panic!("wch recv failed: {:?}", err),
+                };
+
+                if let Err(err) = writer.write_all(&wbuf).await {
+                    proc.on_error(&g::Err::TcpWriteFailed(format!("{:?}", err))).await;
+                    break 'cli_loop;
+                }
+            }
+
+            result_read = reader.read_buf(req.rbuf_mut()) => {
+                match result_read {
+                    Ok(0) => break 'cli_loop,
+                    Ok(_) => {}
+                    Err(err) => {
+                        proc.on_error(&g::Err::TcpReadFailed(format!("{:?}", err))).await;
+                        break 'cli_loop;
+                    }
+                }
+
+                match req.parse() {
+                    Err(err) => {
+                        proc.on_error(&err).await;
+                        break 'cli_loop;
+                    }
+                    Ok(ok) => {
+                        if ok {
+                            match proc.on_process(&req).await {
+                                Err(_) => break 'cli_loop,
+                                Ok(some_wbuf) => {
+                                    if let Some(wbuf) = some_wbuf {
+                                        if let Err(err) = tx.send(wbuf) {
+                                            panic!("wch send failed: {:?}", err);
+                                        }
+                                    }
+                                }
+                            };
+                        }
+                    }
+                }
+            }
+        }
     }
 }

@@ -73,6 +73,6 @@ async fn main() -> g::Result<()> {
     piper::regist(Arc::new(Hello {})).unwrap();
     piper::regist(Arc::new(Echo {})).unwrap();
 
-    tcp::run(&server, piper::Piper {}).await;
+    tcp::server_run(&server, piper::Piper {}).await;
     Ok(())
 }

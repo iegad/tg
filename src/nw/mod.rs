@@ -86,14 +86,14 @@ pub fn bytes_to_sockaddr(buf: &[u8], port: u16) -> g::Result<SocketAddr> {
     Ok(SocketAddr::new(addr, port))
 }
 
-// ----------------------------------- 处理器接口 -----------------------------------
+// ----------------------------------- IServerProc -----------------------------------
 //
 //
 /// # IProc
 ///
 /// 处理器接口
 #[async_trait]
-pub trait IProc: Copy + Clone + Send + Sync + 'static {
+pub trait ISvrProc: Copy + Clone + Send + Sync + 'static {
     /// # on_init
     ///
     /// 服务端初始化事件
@@ -145,7 +145,15 @@ pub trait IProc: Copy + Clone + Send + Sync + 'static {
     /// # on_process
     ///
     /// 客户端消息处理事件
-    async fn on_process(&self, conn: &Conn, req: &pack::Package) -> g::Result<BytesMut>;
+    async fn on_process(&self, conn: &Conn, req: &pack::Package) -> g::Result<Option<BytesMut>>;
+}
+
+#[async_trait]
+pub trait ICliProc: Copy + Clone + Send + Sync + 'static {
+    async fn on_process(&self, req: &pack::Package) -> g::Result<Option<BytesMut>>;
+    async fn on_error(&self, err: &g::Err) {
+        println!("{:?}", err);
+    }
 }
 
 // ----------------------------------- Server -----------------------------------

@@ -4,7 +4,7 @@ use crate::{
         self,
         conn::Conn,
         pack::{PACK_POOL, RSP_POOL},
-        tcp, IProc,
+        tcp, ISvrProc,
     },
 };
 use async_trait::async_trait;
@@ -33,18 +33,18 @@ pub trait Handler: Sync + Send + 'static {
 pub struct Piper;
 
 #[async_trait]
-impl IProc for Piper {
+impl ISvrProc for Piper {
     async fn on_process(
         &self,
         conn: &nw::conn::Conn,
         req: &nw::pack::Package,
-    ) -> g::Result<BytesMut> {
+    ) -> g::Result<Option<BytesMut>> {
         let handler = match SERV_HANDLERS.read().unwrap().get(&req.package_id()) {
             None => return Err(g::Err::PiperPIDInvalid),
             Some(v) => v.clone(),
         };
 
-        Ok(handler.handle(conn, req.data()).await)
+        Ok(Some(handler.handle(conn, req.data()).await))
     }
 }
 

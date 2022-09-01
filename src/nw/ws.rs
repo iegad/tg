@@ -1,4 +1,4 @@
-use super::{conn::CONN_POOL, pack, IProc, Server};
+use super::{conn::CONN_POOL, pack, ISvrProc, Server};
 use crate::g;
 use futures_util::{SinkExt, StreamExt};
 use std::{net::SocketAddr, time::Duration};
@@ -9,9 +9,9 @@ use tokio::{
 };
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
-pub async fn run<TProc>(server: &Server, proc: TProc)
+pub async fn server_run<TProc>(server: &Server, proc: TProc)
 where
-    TProc: IProc,
+    TProc: ISvrProc,
 {
     proc.on_init(server).await;
 
@@ -69,7 +69,7 @@ async fn conn_handle<TProc>(
     proc: TProc,
     mut notify_shutdown: broadcast::Receiver<u8>,
 ) where
-    TProc: IProc,
+    TProc: ISvrProc,
 {
     let mut conn = CONN_POOL.pull();
     conn.init(&stream);
@@ -149,14 +149,21 @@ async fn conn_handle<TProc>(
                         };
 
                         if ok {
+                            if conn.idempotent() >= req.idempotent() {
+                                continue 'conn_loop;
+                            }
+
                             conn.recv_seq_incr();
-                            let rsp = match proc.on_process(&conn, &req).await {
+
+                            let some_wbuf = match proc.on_process(&conn, &req).await {
                                 Err(_) => break 'conn_loop,
                                 Ok(rsp) => rsp,
                             };
 
-                            if let Err(err) = tx.send(rsp) {
-                                panic!("write channel[mpsc] send failed: {}", err);
+                            if let Some(wbuf) = some_wbuf {
+                                if let Err(err) = tx.send(wbuf) {
+                                    panic!("write channel[mpsc] send failed: {}", err);
+                                }
                             }
                         }
                     }
