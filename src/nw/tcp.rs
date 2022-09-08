@@ -1,14 +1,19 @@
-use super::{Conn, IEvent, IServerEvent, Server};
+use super::{pack, Conn, IEvent, IServerEvent, Server};
 use crate::g;
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
+    net::{TcpSocket, TcpStream},
     select, signal,
     sync::broadcast,
 };
 
 pub async fn server_run<T: IServerEvent>(server: &Server<T>) -> io::Result<()> {
-    let listener = TcpListener::bind(server.host()).await?;
+    let lfd = TcpSocket::new_v4()?;
+    lfd.set_reuseport(true)?;
+    lfd.set_reuseaddr(true)?;
+    lfd.bind(server.host().parse().unwrap())?;
+
+    let listener = lfd.listen(1024)?;
     let (notfiy_shutdown, mut shutdown) = broadcast::channel(1);
 
     server
@@ -60,6 +65,7 @@ pub async fn conn_handle<T: IEvent>(
     let tx = conn.sender();
     let mut rx = conn.receiver();
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(timeout));
+    let mut req = pack::Package::new();
 
     if let Err(_) = event.on_connected(&conn).await {
         return;
@@ -98,21 +104,41 @@ pub async fn conn_handle<T: IEvent>(
                         break;
                     }
                     Ok(0) => break,
-                    Ok(n) => println!("{}", hex::encode(&conn.rbuf()[..n])),
+                    Ok(_) => (),
                 }
 
-                conn.recv_seq += 1;
+                loop {
+                    if req.head_valid() {
+                        if req.valid() {
+                            conn.recv_seq += 1;
+                            let option_rsp = match event.on_process(&conn, &req).await {
+                                Err(_) => break,
+                                Ok(v) => v,
+                            };
 
-                let option_rsp = match event.on_process(&conn, &conn.rbuf()).await {
-                    Err(_) => break,
-                    Ok(v) => v,
-                };
+                            req.reset();
+                            if let Some(rsp) = option_rsp {
+                                tx.send(rsp).unwrap();
+                            }
+                        } else {
+                            if conn.rbuf_mut().len() == 0 {
+                                break;
+                            }
+                            req.fill_data(conn.rbuf_mut());
+                        }
+                    } else {
+                        if let Err(err) = req.from_buf(conn.rbuf_mut()) {
+                            event.on_error(&conn, err).await;
+                            break;
+                        }
+                    }
 
-                if let Some(rsp) = option_rsp {
-                    tx.send(rsp).unwrap();
+                    if !req.valid() && conn.rbuf_mut().len() < pack::Package::HEAD_SIZE {
+                        break;
+                    }
                 }
 
-                conn.rbuf_mut().clear();
+                conn.check_rbuf();
             }
         }
     }

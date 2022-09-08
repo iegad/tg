@@ -1,16 +1,16 @@
+pub mod pack;
 pub mod tcp;
+use crate::g;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use tokio::{
-    net::TcpStream,
-    sync::{broadcast, Semaphore},
-};
-
-use crate::g;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
     os::unix::prelude::AsRawFd,
     sync::Arc,
+};
+use tokio::{
+    net::TcpStream,
+    sync::{broadcast, Semaphore},
 };
 
 // ----------------------------------- 工具函数 -----------------------------------
@@ -101,7 +101,7 @@ pub trait IEvent: Send + Sync + Clone + Copy + 'static {
         println!("[{}|{:?}] has disconnected", conn.sockfd, conn.remote());
     }
 
-    async fn on_process(&self, conn: &Conn, rbuf: &BytesMut) -> g::Result<Option<Bytes>>;
+    async fn on_process(&self, conn: &Conn, req: &pack::Package) -> g::Result<Option<Bytes>>;
 }
 
 #[async_trait]
@@ -181,6 +181,26 @@ impl Conn {
     }
 
     pub fn load_from(&mut self, stream: &TcpStream) {
+        use nix::sys::socket;
+
+        let sockfd = stream.as_raw_fd();
+
+        println!(
+            "DEFAULT: RCVBUF[{}] & SNDBUF[{}]",
+            socket::getsockopt(sockfd, socket::sockopt::RcvBuf).unwrap(),
+            socket::getsockopt(sockfd, socket::sockopt::SndBuf).unwrap()
+        );
+
+        stream.set_nodelay(true).unwrap();
+        socket::setsockopt(sockfd, socket::sockopt::RcvBuf, &(1024 * 1024)).unwrap();
+        socket::setsockopt(sockfd, socket::sockopt::SndBuf, &(1024 * 1024)).unwrap();
+
+        println!(
+            "TG_NW: RCVBUF[{}] & SNDBUF[{}]",
+            socket::getsockopt(sockfd, socket::sockopt::RcvBuf).unwrap(),
+            socket::getsockopt(sockfd, socket::sockopt::SndBuf).unwrap()
+        );
+
         self.sockfd = stream.as_raw_fd();
         self.remote = stream.peer_addr().unwrap();
         self.local = stream.local_addr().unwrap();
@@ -191,6 +211,14 @@ impl Conn {
         self.idempoetnt = 0;
         self.send_seq = 0;
         self.recv_seq = 0;
+    }
+
+    pub fn check_rbuf(&mut self) {
+        let n = self.rbuf.len();
+        if n < pack::Package::HEAD_SIZE {
+            self.rbuf.resize(g::DEFAULT_BUF_SIZE, 0);
+            unsafe { self.rbuf.set_len(n) };
+        }
     }
 
     pub fn sockfd(&self) -> i32 {
@@ -219,5 +247,13 @@ impl Conn {
 
     pub fn rbuf(&self) -> &BytesMut {
         &self.rbuf
+    }
+
+    pub fn recv_seq(&self) -> u32 {
+        self.recv_seq
+    }
+
+    pub fn send_seq(&self) -> u32 {
+        self.send_seq
     }
 }

@@ -1,31 +1,34 @@
 use async_trait::async_trait;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
+use tg::nw::pack;
 
 #[derive(Clone, Copy)]
-struct EchoEvent;
+struct SimpleEvent;
 
 #[async_trait]
-impl tg::nw::IEvent for EchoEvent {
+impl tg::nw::IEvent for SimpleEvent {
     async fn on_process(
         &self,
         conn: &tg::nw::Conn,
-        req: &BytesMut,
+        req: &pack::Package,
     ) -> tg::g::Result<Option<Bytes>> {
+        assert_eq!(req.idempotent(), conn.recv_seq());
+        Ok(None)
+    }
+
+    async fn on_disconnected(&self, conn: &tg::nw::Conn) {
         println!(
-            "[{}|{:?}] => {}",
+            "[{}|{:?}] has disconnected: {}",
             conn.sockfd(),
             conn.remote(),
-            std::str::from_utf8(&req[..req.len()]).unwrap()
+            conn.recv_seq()
         );
-
-        let mut b = BytesMut::new();
-        b.put(&req[..req.len()]);
-        Ok(Some(b.freeze()))
+        assert_eq!(1_000_000, conn.recv_seq());
     }
 }
 
 #[async_trait]
-impl tg::nw::IServerEvent for EchoEvent {}
+impl tg::nw::IServerEvent for SimpleEvent {}
 
 #[tokio::main]
 async fn main() {
@@ -33,7 +36,7 @@ async fn main() {
         "0.0.0.0:6688",
         100,
         tg::g::DEFAULT_READ_TIMEOUT,
-        EchoEvent {},
+        SimpleEvent {},
     );
 
     if let Err(err) = tg::nw::tcp::server_run(&server).await {
