@@ -229,6 +229,20 @@ impl Package {
     pub fn raw_len(&self) -> usize {
         self.raw_len
     }
+
+    pub fn parse(rbuf: &mut BytesMut, pack: &mut Self) -> g::Result<()> {
+        debug_assert!(rbuf.len() > 0);
+        if pack.head_valid() {
+            if !pack.valid() {
+                pack.fill_data(rbuf);
+            }
+        } else {
+            debug_assert!(rbuf.len() >= Self::HEAD_SIZE);
+            pack.from_buf(rbuf)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

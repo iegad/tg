@@ -71,17 +71,17 @@ pub async fn conn_handle<T: IEvent>(
         return;
     }
 
-    loop {
+    'conn_loop: loop {
         ticker.reset();
 
         select! {
             _ = shutdown.recv() => {
-                break;
+                break 'conn_loop;
             }
 
             _ = ticker.tick() => {
                 event.on_error(&conn, g::Err::TcpReadTimeout).await;
-                break;
+                break 'conn_loop;
             }
 
             result_wbuf = rx.recv() => {
@@ -101,37 +101,55 @@ pub async fn conn_handle<T: IEvent>(
                 match result_read {
                     Err(err) => {
                         event.on_error(&conn, g::Err::TcpReadFailed(format!("{:?}", err))).await;
-                        break;
+                        break 'conn_loop;
                     }
-                    Ok(0) => break,
+                    Ok(0) => break 'conn_loop,
                     Ok(_) => (),
                 }
 
                 loop {
-                    if req.head_valid() {
-                        if req.valid() {
-                            conn.recv_seq += 1;
-                            let option_rsp = match event.on_process(&conn, &req).await {
-                                Err(_) => break,
-                                Ok(v) => v,
-                            };
+                    if req.valid() {
+                        conn.recv_seq += 1;
+                        let option_rsp = match event.on_process(&conn, &req).await {
+                            Err(_) => break 'conn_loop,
+                            Ok(v) => v,
+                        };
 
-                            req.reset();
-                            if let Some(rsp) = option_rsp {
-                                tx.send(rsp).unwrap();
-                            }
-                        } else {
-                            if conn.rbuf_mut().len() == 0 {
-                                break;
-                            }
-                            req.fill_data(conn.rbuf_mut());
+                        req.reset();
+                        if let Some(rsp) = option_rsp {
+                            tx.send(rsp).unwrap();
                         }
                     } else {
-                        if let Err(err) = req.from_buf(conn.rbuf_mut()) {
+                        if let Err(err) = pack::Package::parse(conn.rbuf_mut(), &mut req) {
                             event.on_error(&conn, err).await;
-                            break;
+                            break 'conn_loop;
                         }
                     }
+
+                    // if req.head_valid() {
+                    //     if req.valid() {
+                    //         conn.recv_seq += 1;
+                    //         let option_rsp = match event.on_process(&conn, &req).await {
+                    //             Err(_) => break,
+                    //             Ok(v) => v,
+                    //         };
+
+                    //         req.reset();
+                    //         if let Some(rsp) = option_rsp {
+                    //             tx.send(rsp).unwrap();
+                    //         }
+                    //     } else {
+                    //         if conn.rbuf_mut().len() == 0 {
+                    //             break;
+                    //         }
+                    //         req.fill_data(conn.rbuf_mut());
+                    //     }
+                    // } else {
+                    //     if let Err(err) = req.from_buf(conn.rbuf_mut()) {
+                    //         event.on_error(&conn, err).await;
+                    //         break;
+                    //     }
+                    // }
 
                     if !req.valid() && conn.rbuf_mut().len() < pack::Package::HEAD_SIZE {
                         break;
