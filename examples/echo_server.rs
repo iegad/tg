@@ -3,17 +3,17 @@ use bytes::Bytes;
 use tg::nw::pack;
 
 #[derive(Clone, Copy)]
-struct SimpleEvent;
+struct EchoEvent;
 
 #[async_trait]
-impl tg::nw::IEvent for SimpleEvent {
+impl tg::nw::IEvent for EchoEvent {
     async fn on_process(
         &self,
         conn: &tg::nw::Conn,
         req: &pack::Package,
     ) -> tg::g::Result<Option<Bytes>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
-        Ok(None)
+        Ok(Some(req.to_bytes().freeze()))
     }
 
     async fn on_disconnected(&self, conn: &tg::nw::Conn) {
@@ -23,12 +23,12 @@ impl tg::nw::IEvent for SimpleEvent {
             conn.remote(),
             conn.recv_seq()
         );
-        assert_eq!(1_000_000, conn.recv_seq());
+        // assert_eq!(1_000_000, conn.recv_seq());
     }
 }
 
 #[async_trait]
-impl tg::nw::IServerEvent for SimpleEvent {}
+impl tg::nw::IServerEvent for EchoEvent {}
 
 #[tokio::main]
 async fn main() {
@@ -36,7 +36,7 @@ async fn main() {
         "0.0.0.0:6688",
         100,
         tg::g::DEFAULT_READ_TIMEOUT,
-        SimpleEvent {},
+        EchoEvent {},
     );
 
     if let Err(err) = tg::nw::tcp::server_run(&server).await {
