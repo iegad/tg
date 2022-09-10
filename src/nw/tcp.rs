@@ -1,11 +1,18 @@
 use super::{pack, Conn, IEvent, IServerEvent, Server};
 use crate::g;
+use lazy_static::lazy_static;
+use lockfree_object_pool::LinearObjectPool;
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
     select, signal,
     sync::broadcast,
 };
+
+lazy_static! {
+    static ref CONN_POOL: LinearObjectPool<Conn> =
+        LinearObjectPool::new(|| Conn::new(), |v| { v.reset() });
+}
 
 pub async fn server_run<T: IServerEvent>(server: &Server<T>) -> io::Result<()> {
     let lfd = TcpSocket::new_v4()?;
@@ -58,7 +65,7 @@ pub async fn conn_handle<T: IEvent>(
     mut shutdown: broadcast::Receiver<u8>,
     event: T,
 ) {
-    let mut conn = Conn::new();
+    let mut conn = CONN_POOL.pull();
     conn.load_from(&stream);
 
     let (mut reader, mut writer) = stream.split();
