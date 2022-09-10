@@ -23,7 +23,6 @@ impl tg::nw::IEvent for EchoEvent {
             conn.remote(),
             conn.recv_seq()
         );
-        // assert_eq!(1_000_000, conn.recv_seq());
     }
 }
 

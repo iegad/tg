@@ -126,31 +126,6 @@ pub async fn conn_handle<T: IEvent>(
                         }
                     }
 
-                    // if req.head_valid() {
-                    //     if req.valid() {
-                    //         conn.recv_seq += 1;
-                    //         let option_rsp = match event.on_process(&conn, &req).await {
-                    //             Err(_) => break,
-                    //             Ok(v) => v,
-                    //         };
-
-                    //         req.reset();
-                    //         if let Some(rsp) = option_rsp {
-                    //             tx.send(rsp).unwrap();
-                    //         }
-                    //     } else {
-                    //         if conn.rbuf_mut().len() == 0 {
-                    //             break;
-                    //         }
-                    //         req.fill_data(conn.rbuf_mut());
-                    //     }
-                    // } else {
-                    //     if let Err(err) = req.from_buf(conn.rbuf_mut()) {
-                    //         event.on_error(&conn, err).await;
-                    //         break;
-                    //     }
-                    // }
-
                     if !req.valid() && conn.rbuf_mut().len() < pack::Package::HEAD_SIZE {
                         break;
                     }
