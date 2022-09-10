@@ -12,6 +12,8 @@ use tokio::{
 lazy_static! {
     static ref CONN_POOL: LinearObjectPool<Conn> =
         LinearObjectPool::new(|| Conn::new(), |v| { v.reset() });
+    static ref REQ_POOL: LinearObjectPool<pack::Package> =
+        LinearObjectPool::new(|| pack::Package::new(), |v| { v.reset() });
 }
 
 pub async fn server_run<T: IServerEvent>(server: &Server<T>) -> io::Result<()> {
@@ -72,7 +74,7 @@ pub async fn conn_handle<T: IEvent>(
     let tx = conn.sender();
     let mut rx = conn.receiver();
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(timeout));
-    let mut req = pack::Package::new();
+    let mut req = REQ_POOL.pull();
 
     if let Err(_) = event.on_connected(&conn).await {
         return;
