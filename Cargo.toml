@@ -19,5 +19,9 @@ url = "2.2.2"
 nix = "0.25.0"
 type-layout = "0.2.0"
 prost = "0.10"
-prost-types = "0.10"
-prost-build = "0.11.1"
+tonic = "0.8.1"
+tonic-build = "0.8.0"
+tracing-appender = "0.2.2"
+tracing = "0.1.36"
+tracing-subscriber = { version = "0.3.15", features = ["env-filter","time","local-time"] }
+time = { version = "0.3", features = ["macros"] }

@@ -89,16 +89,16 @@ pub fn bytes_to_sockaddr(buf: &[u8], port: u16) -> g::Result<SocketAddr> {
 #[async_trait]
 pub trait IEvent: Send + Sync + Clone + Copy + 'static {
     async fn on_error(&self, conn: &Conn, err: g::Err) {
-        println!("[{}|{:?}] => {:?}", conn.sockfd, conn.remote(), err);
+        tracing::debug!("[{}|{:?}] => {:?}", conn.sockfd, conn.remote(), err);
     }
 
     async fn on_connected(&self, conn: &Conn) -> g::Result<()> {
-        println!("[{}|{:?}] has connected", conn.sockfd, conn.remote());
+        tracing::debug!("[{}|{:?}] has connected", conn.sockfd, conn.remote());
         Ok(())
     }
 
     async fn on_disconnected(&self, conn: &Conn) {
-        println!("[{}|{:?}] has disconnected", conn.sockfd, conn.remote());
+        tracing::debug!("[{}|{:?}] has disconnected", conn.sockfd, conn.remote());
     }
 
     async fn on_process(&self, conn: &Conn, req: &pack::Package) -> g::Result<Option<Bytes>>;
@@ -107,14 +107,16 @@ pub trait IEvent: Send + Sync + Clone + Copy + 'static {
 #[async_trait]
 pub trait IServerEvent: IEvent {
     async fn on_runing(&self, host: &'static str, max: usize, timeout: u64) {
-        println!(
+        tracing::debug!(
             "server[HOST:{}|MAX:{}|TIMOUT:{}] is running...",
-            host, max, timeout
+            host,
+            max,
+            timeout
         );
     }
 
     async fn on_stopped(&self, host: &'static str) {
-        println!("server[HOST:{}] has stopped...!!!", host);
+        tracing::debug!("server[HOST:{}] has stopped...!!!", host);
     }
 }
 
@@ -185,7 +187,7 @@ impl Conn {
 
         let sockfd = stream.as_raw_fd();
 
-        println!(
+        tracing::debug!(
             "DEFAULT: RCVBUF[{}] & SNDBUF[{}]",
             socket::getsockopt(sockfd, socket::sockopt::RcvBuf).unwrap(),
             socket::getsockopt(sockfd, socket::sockopt::SndBuf).unwrap()
@@ -195,7 +197,7 @@ impl Conn {
         socket::setsockopt(sockfd, socket::sockopt::RcvBuf, &(1024 * 1024)).unwrap();
         socket::setsockopt(sockfd, socket::sockopt::SndBuf, &(1024 * 1024)).unwrap();
 
-        println!(
+        tracing::debug!(
             "TG_NW: RCVBUF[{}] & SNDBUF[{}]",
             socket::getsockopt(sockfd, socket::sockopt::RcvBuf).unwrap(),
             socket::getsockopt(sockfd, socket::sockopt::SndBuf).unwrap()
@@ -206,6 +208,7 @@ impl Conn {
         self.local = stream.local_addr().unwrap();
     }
 
+    #[inline(always)]
     pub fn reset(&mut self) {
         self.sockfd = 0;
         self.idempoetnt = 0;
@@ -213,6 +216,7 @@ impl Conn {
         self.recv_seq = 0;
     }
 
+    #[inline(always)]
     pub fn check_rbuf(&mut self) {
         let n = self.rbuf.len();
         if n < pack::Package::HEAD_SIZE {
@@ -221,38 +225,47 @@ impl Conn {
         }
     }
 
+    #[inline(always)]
     pub fn sockfd(&self) -> i32 {
         self.sockfd
     }
 
+    #[inline(always)]
     pub fn remote(&self) -> &SocketAddr {
         &self.remote
     }
 
+    #[inline(always)]
     pub fn local(&self) -> &SocketAddr {
         &self.local
     }
 
+    #[inline(always)]
     pub fn receiver(&self) -> broadcast::Receiver<Bytes> {
         self.wch_sender.subscribe()
     }
 
+    #[inline(always)]
     pub fn sender(&self) -> broadcast::Sender<Bytes> {
         self.wch_sender.clone()
     }
 
+    #[inline(always)]
     pub fn rbuf_mut(&mut self) -> &mut BytesMut {
         &mut self.rbuf
     }
 
+    #[inline(always)]
     pub fn rbuf(&self) -> &BytesMut {
         &self.rbuf
     }
 
+    #[inline(always)]
     pub fn recv_seq(&self) -> u32 {
         self.recv_seq
     }
 
+    #[inline(always)]
     pub fn send_seq(&self) -> u32 {
         self.send_seq
     }

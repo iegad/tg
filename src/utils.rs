@@ -19,6 +19,7 @@ pub fn get_pwd() -> g::Result<String> {
     Ok(result)
 }
 
+#[inline(always)]
 pub fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -26,6 +27,7 @@ pub fn now_unix() -> u64 {
         .as_secs()
 }
 
+#[inline(always)]
 pub fn now_unix_nanos() -> u128 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -33,6 +35,7 @@ pub fn now_unix_nanos() -> u128 {
         .as_nanos()
 }
 
+#[inline(always)]
 pub fn now_unix_mills() -> u128 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -40,6 +43,7 @@ pub fn now_unix_mills() -> u128 {
         .as_millis()
 }
 
+#[inline(always)]
 pub fn now_unix_micros() -> u128 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -47,13 +51,58 @@ pub fn now_unix_micros() -> u128 {
         .as_micros()
 }
 
+#[inline(always)]
 pub fn bytes_to_hex(data: &[u8]) -> String {
     hex::encode(data)
 }
 
+#[inline(always)]
 pub fn hex_to_bytes(data: &str) -> g::Result<Vec<u8>> {
     match hex::decode(data) {
         Err(_) => Err(g::Err::UtilsHexStr),
         Ok(v) => Ok(v),
     }
+}
+
+pub fn init_log_with_path(lev: tracing::Level, path: &str) {
+    use tracing_appender::rolling;
+    use tracing_subscriber::fmt::writer::MakeWriterExt;
+
+    assert!(path.len() > 0);
+
+    let dfile = rolling::hourly(path, "DEBUG").with_max_level(tracing::Level::DEBUG);
+    let wfile = rolling::hourly(path, "WARN").with_max_level(tracing::Level::WARN);
+    let efile = rolling::hourly(path, "ERROR").with_max_level(tracing::Level::ERROR);
+    let ifile = rolling::hourly(path, "INFO").with_max_level(tracing::Level::INFO);
+    let af = dfile.and(wfile).and(efile).and(ifile);
+
+    use time::macros::format_description;
+    use time::UtcOffset;
+    use tracing_subscriber::fmt::time::OffsetTime;
+
+    tracing_subscriber::fmt()
+        .with_timer(OffsetTime::new(
+            UtcOffset::from_hms(8, 0, 0).unwrap(),
+            format_description!("[hour]:[minute]:[second].[subsecond digits:6]"),
+        ))
+        .with_max_level(lev)
+        .with_writer(af)
+        .with_ansi(false)
+        .init();
+}
+
+pub fn init_log(level: tracing::Level) {
+    use time::macros::format_description;
+    use time::UtcOffset;
+    use tracing_subscriber::fmt::time::OffsetTime;
+
+    tracing_subscriber::fmt()
+        .with_timer(OffsetTime::new(
+            UtcOffset::from_hms(8, 0, 0).unwrap(),
+            format_description!(
+                "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:6]"
+            ),
+        ))
+        .with_max_level(level)
+        .init();
 }

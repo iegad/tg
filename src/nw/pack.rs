@@ -99,6 +99,7 @@ impl Package {
         })
     }
 
+    #[inline(always)]
     pub fn reset(&mut self) {
         self.service_id = 0;
     }
@@ -141,6 +142,7 @@ impl Package {
         Ok(())
     }
 
+    #[inline(always)]
     pub fn to_bytes(&self) -> BytesMut {
         let mut wbuf = BytesMut::with_capacity(self.raw_len);
         wbuf.put_u16_le(self.service_id ^ Self::HEAD_16_KEY);
@@ -155,6 +157,7 @@ impl Package {
         wbuf
     }
 
+    #[inline(always)]
     pub fn fill_data(&mut self, rbuf: &mut BytesMut) {
         let rbuf_len = rbuf.len();
 
@@ -167,6 +170,7 @@ impl Package {
         rbuf.advance(left_len);
     }
 
+    #[inline(always)]
     pub fn append_data(&mut self, data: &[u8]) {
         self.data.extend_from_slice(data);
         self.raw_len += data.len();
@@ -177,42 +181,52 @@ impl Package {
         self.service_id > 0 && self.package_id > 0 && self.router_id > 0 && self.idempotent > 0
     }
 
+    #[inline(always)]
     pub fn valid(&self) -> bool {
         self.raw_len == Self::HEAD_SIZE + self.data.len() && self.head_valid()
     }
 
+    #[inline(always)]
     pub fn set_service_id(&mut self, service_id: u16) {
         self.service_id = service_id;
     }
 
+    #[inline(always)]
     pub fn service_id(&self) -> u16 {
         self.service_id
     }
 
+    #[inline(always)]
     pub fn set_package_id(&mut self, package_id: u16) {
         self.package_id = package_id;
     }
 
+    #[inline(always)]
     pub fn package_id(&self) -> u16 {
         self.package_id
     }
 
+    #[inline(always)]
     pub fn set_router_id(&mut self, router_id: u32) {
         self.router_id = router_id;
     }
 
+    #[inline(always)]
     pub fn router_id(&self) -> u32 {
         self.router_id
     }
 
+    #[inline(always)]
     pub fn set_idempotent(&mut self, idempotent: u32) {
         self.idempotent = idempotent;
     }
 
+    #[inline(always)]
     pub fn idempotent(&self) -> u32 {
         self.idempotent
     }
 
+    #[inline(always)]
     pub fn set_data(&mut self, data: &[u8]) {
         assert!(data.len() < Self::MAX_DATA_SIZE);
 
@@ -222,14 +236,17 @@ impl Package {
         self.raw_len = Self::HEAD_SIZE + data.len();
     }
 
+    #[inline(always)]
     pub fn data(&self) -> &[u8] {
         &self.data[..self.raw_len - Self::HEAD_SIZE]
     }
 
+    #[inline(always)]
     pub fn raw_len(&self) -> usize {
         self.raw_len
     }
 
+    #[inline(always)]
     pub fn parse(rbuf: &mut BytesMut, pack: &mut Self) -> g::Result<()> {
         debug_assert!(rbuf.len() > 0);
         if pack.head_valid() {

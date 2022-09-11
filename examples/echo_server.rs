@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use bytes::Bytes;
-use tg::nw::pack;
+use tg::{nw::pack, utils};
 
 #[derive(Clone, Copy)]
 struct EchoEvent;
@@ -17,7 +17,7 @@ impl tg::nw::IEvent for EchoEvent {
     }
 
     async fn on_disconnected(&self, conn: &tg::nw::Conn) {
-        println!(
+        tracing::debug!(
             "[{}|{:?}] has disconnected: {}",
             conn.sockfd(),
             conn.remote(),
@@ -31,6 +31,8 @@ impl tg::nw::IServerEvent for EchoEvent {}
 
 #[tokio::main]
 async fn main() {
+    utils::init_log(tracing::Level::DEBUG);
+
     let server = tg::nw::Server::new(
         "0.0.0.0:6688",
         100,
