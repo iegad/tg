@@ -248,13 +248,18 @@ impl Package {
 
     #[inline(always)]
     pub fn parse(rbuf: &mut BytesMut, pack: &mut Self) -> g::Result<()> {
-        debug_assert!(rbuf.len() > 0);
+        if rbuf.len() == 0 {
+            return Err(g::Err::PackDataSizeInvalid);
+        }
+
         if pack.head_valid() {
             if !pack.valid() {
                 pack.fill_data(rbuf);
             }
         } else {
-            debug_assert!(rbuf.len() >= Self::HEAD_SIZE);
+            if rbuf.len() < Self::HEAD_SIZE {
+                return Err(g::Err::PackDataSizeInvalid);
+            }
             pack.from_buf(rbuf)?;
         }
 

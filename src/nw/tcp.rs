@@ -6,7 +6,7 @@ use std::sync::{atomic::Ordering, Arc};
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
-    select, signal,
+    select,
     sync::broadcast,
 };
 
@@ -27,11 +27,7 @@ pub async fn server_run<T: IServerEvent>(server: Arc<Ptr<Server<T>>>) -> io::Res
     let notify_shutdown = server.shutdown.clone();
     let mut shutdown = server.shutdown.subscribe();
 
-    server
-        .event
-        .on_runing(server.host, server.max_connections, server.timeout)
-        .await;
-
+    server.event.on_runing(server.clone()).await;
     server.running.store(true, Ordering::SeqCst);
 
     'accept_loop: loop {
@@ -49,12 +45,6 @@ pub async fn server_run<T: IServerEvent>(server: Arc<Ptr<Server<T>>>) -> io::Res
                 });
             }
 
-            _ = signal::ctrl_c() => {
-                if let Err(err) = notify_shutdown.send(1) {
-                    panic!("notfiy_shutdown send failed: {:?}", err);
-                }
-            }
-
             _ = shutdown.recv() => {
                 break 'accept_loop;
             }
@@ -62,7 +52,7 @@ pub async fn server_run<T: IServerEvent>(server: Arc<Ptr<Server<T>>>) -> io::Res
     }
 
     server.get_mut().running.store(false, Ordering::SeqCst);
-    server.event.on_stopped(server.host).await;
+    server.event.on_stopped(server.clone()).await;
 
     Ok(())
 }

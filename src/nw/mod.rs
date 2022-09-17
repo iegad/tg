@@ -109,17 +109,17 @@ pub trait IEvent: Default + Send + Sync + Clone + Copy + 'static {
 
 #[async_trait]
 pub trait IServerEvent: IEvent {
-    async fn on_runing(&self, host: &'static str, max: usize, timeout: u64) {
+    async fn on_runing(&self, server: ServerPtr<Self>) {
         tracing::debug!(
             "server[HOST:{}|MAX:{}|TIMOUT:{}] is running...",
-            host,
-            max,
-            timeout
+            server.host,
+            server.max_connections,
+            server.timeout
         );
     }
 
-    async fn on_stopped(&self, host: &'static str) {
-        tracing::debug!("server[HOST:{}] has stopped...!!!", host);
+    async fn on_stopped(&self, server: ServerPtr<Self>) {
+        tracing::debug!("server[HOST:{}] has stopped...!!!", server.host);
     }
 }
 
@@ -136,7 +136,7 @@ pub struct Server<T> {
 pub type ServerPtr<T> = Arc<Ptr<Server<T>>>;
 
 impl<T: IServerEvent> Server<T> {
-    pub fn new(host: &'static str, max_connections: usize, timeout: u64) -> Arc<Ptr<Self>> {
+    pub fn new(host: &'static str, max_connections: usize, timeout: u64) -> ServerPtr<T> {
         let (shutdown, _) = broadcast::channel(1);
 
         Ptr::parse(Self {
