@@ -192,6 +192,7 @@ impl<T: IServerEvent> Default for Server<T> {
 }
 
 pub struct Conn {
+    #[cfg(unix)]
     sockfd: i32,
     idempoetnt: u32,
     send_seq: u32,
@@ -220,23 +221,14 @@ impl Conn {
     pub fn load_from(&mut self, stream: &TcpStream) {
         use nix::sys::socket;
 
+        #[cfg(unix)]
         let sockfd = stream.as_raw_fd();
 
-        tracing::debug!(
-            "DEFAULT: RCVBUF[{}] & SNDBUF[{}]",
-            socket::getsockopt(sockfd, socket::sockopt::RcvBuf).unwrap(),
-            socket::getsockopt(sockfd, socket::sockopt::SndBuf).unwrap()
-        );
-
         stream.set_nodelay(true).unwrap();
+        #[cfg(unix)]
         socket::setsockopt(sockfd, socket::sockopt::RcvBuf, &(1024 * 1024)).unwrap();
+        #[cfg(unix)]
         socket::setsockopt(sockfd, socket::sockopt::SndBuf, &(1024 * 1024)).unwrap();
-
-        tracing::debug!(
-            "TG_NW: RCVBUF[{}] & SNDBUF[{}]",
-            socket::getsockopt(sockfd, socket::sockopt::RcvBuf).unwrap(),
-            socket::getsockopt(sockfd, socket::sockopt::SndBuf).unwrap()
-        );
 
         self.sockfd = stream.as_raw_fd();
         self.remote = stream.peer_addr().unwrap();
@@ -261,6 +253,7 @@ impl Conn {
     }
 
     #[inline(always)]
+    #[cfg(unix)]
     pub fn sockfd(&self) -> i32 {
         self.sockfd
     }
