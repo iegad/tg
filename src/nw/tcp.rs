@@ -1,7 +1,8 @@
 use super::{pack, Conn, IEvent, IServerEvent, Server};
-use crate::g;
+use crate::{g, us::Ptr};
 use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
+use std::sync::{atomic::Ordering, Arc};
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
@@ -16,27 +17,30 @@ lazy_static! {
         LinearObjectPool::new(|| pack::Package::new(), |v| { v.reset() });
 }
 
-pub async fn server_run<T: IServerEvent>(server: &Server<T>) -> io::Result<()> {
+pub async fn server_run<T: IServerEvent>(server: Arc<Ptr<Server<T>>>) -> io::Result<()> {
     let lfd = TcpSocket::new_v4()?;
     lfd.set_reuseport(true)?;
     lfd.set_reuseaddr(true)?;
     lfd.bind(server.host().parse().unwrap())?;
 
     let listener = lfd.listen(1024)?;
-    let (notfiy_shutdown, mut shutdown) = broadcast::channel(1);
+    let notify_shutdown = server.shutdown.clone();
+    let mut shutdown = server.shutdown.subscribe();
 
     server
         .event
         .on_runing(server.host, server.max_connections, server.timeout)
         .await;
 
-    loop {
+    server.running.store(true, Ordering::SeqCst);
+
+    'accept_loop: loop {
         select! {
             result_accept =  listener.accept() => {
                 let (stream, _) =  result_accept?;
                 let permit = server.limit_connections.clone().acquire_owned().await.unwrap();
                 let event = server.event.clone();
-                let shutdown = notfiy_shutdown.subscribe();
+                let shutdown = notify_shutdown.subscribe();
                 let timeout = server.timeout;
 
                 tokio::spawn(async move {
@@ -46,18 +50,20 @@ pub async fn server_run<T: IServerEvent>(server: &Server<T>) -> io::Result<()> {
             }
 
             _ = signal::ctrl_c() => {
-                if let Err(err) = notfiy_shutdown.send(1) {
+                if let Err(err) = notify_shutdown.send(1) {
                     panic!("notfiy_shutdown send failed: {:?}", err);
                 }
             }
 
             _ = shutdown.recv() => {
-                break;
+                break 'accept_loop;
             }
         }
     }
 
+    server.get_mut().running.store(false, Ordering::SeqCst);
     server.event.on_stopped(server.host).await;
+
     Ok(())
 }
 

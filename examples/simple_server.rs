@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use tg::nw::pack;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct SimpleEvent;
 
 #[async_trait]
@@ -32,14 +32,18 @@ impl tg::nw::IServerEvent for SimpleEvent {}
 
 #[tokio::main]
 async fn main() {
-    let server = tg::nw::Server::new(
-        "0.0.0.0:6688",
-        100,
-        tg::g::DEFAULT_READ_TIMEOUT,
-        SimpleEvent {},
-    );
+    let server =
+        tg::nw::Server::<SimpleEvent>::new("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
 
-    if let Err(err) = tg::nw::tcp::server_run(&server).await {
+    let controller = server.clone();
+
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        assert!(controller.running());
+        controller.shutdown();
+    });
+
+    if let Err(err) = tg::nw::tcp::server_run(server).await {
         println!("{:?}", err);
     }
 }

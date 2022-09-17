@@ -1,12 +1,15 @@
 pub mod pack;
 pub mod tcp;
-use crate::g;
+use crate::{g, us::Ptr};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
     os::unix::prelude::AsRawFd,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use tokio::{
     net::TcpStream,
@@ -87,7 +90,7 @@ pub fn bytes_to_sockaddr(buf: &[u8], port: u16) -> g::Result<SocketAddr> {
 }
 
 #[async_trait]
-pub trait IEvent: Send + Sync + Clone + Copy + 'static {
+pub trait IEvent: Default + Send + Sync + Clone + Copy + 'static {
     async fn on_error(&self, conn: &Conn, err: g::Err) {
         tracing::debug!("[{}|{:?}] => {:?}", conn.sockfd, conn.remote(), err);
     }
@@ -126,17 +129,25 @@ pub struct Server<T> {
     timeout: u64,
     limit_connections: Arc<Semaphore>,
     event: T,
+    shutdown: broadcast::Sender<u8>,
+    running: AtomicBool,
 }
 
-impl<T: IEvent> Server<T> {
-    pub fn new(host: &'static str, max_connections: usize, timeout: u64, event: T) -> Self {
-        Self {
+pub type ServerPtr<T> = Arc<Ptr<Server<T>>>;
+
+impl<T: IServerEvent> Server<T> {
+    pub fn new(host: &'static str, max_connections: usize, timeout: u64) -> Arc<Ptr<Self>> {
+        let (shutdown, _) = broadcast::channel(1);
+
+        Ptr::parse(Self {
             host,
             max_connections,
             timeout,
             limit_connections: Arc::new(Semaphore::new(max_connections)),
-            event,
-        }
+            event: T::default(),
+            shutdown,
+            running: AtomicBool::new(false),
+        })
     }
 
     pub fn host(&self) -> &'static str {
@@ -153,6 +164,30 @@ impl<T: IEvent> Server<T> {
 
     pub fn timeout(&self) -> u64 {
         self.timeout
+    }
+
+    pub fn shutdown(&self) {
+        self.shutdown.send(1).unwrap();
+    }
+
+    pub fn running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+}
+
+impl<T: IServerEvent> Default for Server<T> {
+    fn default() -> Self {
+        let (shutdown, _) = broadcast::channel(1);
+
+        Self {
+            host: "0.0.0.0:8080",
+            max_connections: g::DEFAULT_MAX_CONNECTIONS,
+            timeout: g::DEFAULT_READ_TIMEOUT,
+            limit_connections: Arc::new(Semaphore::new(g::DEFAULT_MAX_CONNECTIONS)),
+            event: Default::default(),
+            shutdown,
+            running: AtomicBool::new(false),
+        }
     }
 }
 

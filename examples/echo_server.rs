@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use tg::{nw::pack, utils};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct EchoEvent;
 
 #[async_trait]
@@ -33,14 +33,8 @@ impl tg::nw::IServerEvent for EchoEvent {}
 async fn main() {
     utils::init_log(tracing::Level::DEBUG);
 
-    let server = tg::nw::Server::new(
-        "0.0.0.0:6688",
-        100,
-        tg::g::DEFAULT_READ_TIMEOUT,
-        EchoEvent {},
-    );
-
-    if let Err(err) = tg::nw::tcp::server_run(&server).await {
+    let server = tg::nw::Server::<EchoEvent>::new("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
+    if let Err(err) = tg::nw::tcp::server_run(server.clone()).await {
         println!("{:?}", err);
     }
 }
