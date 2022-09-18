@@ -30,7 +30,7 @@ async fn work() {
             'rsp_loop: loop {
                 if let Err(err) = tg::nw::pack::Package::parse(&mut rbuf, &mut rsp) {
                     println!("{:?}", err);
-                    break;
+                    break 'reader_loop;
                 }
 
                 if rsp.valid() {

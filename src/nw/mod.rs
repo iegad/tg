@@ -90,7 +90,7 @@ pub fn bytes_to_sockaddr(buf: &[u8], port: u16) -> g::Result<SocketAddr> {
 }
 
 #[async_trait]
-pub trait IEvent: Default + Send + Sync + Clone + Copy + 'static {
+pub trait IEvent: Default + Send + Sync + Clone + 'static {
     async fn on_error(&self, conn: &Conn, err: g::Err) {
         tracing::debug!("[{}|{:?}] => {:?}", conn.sockfd, conn.remote(), err);
     }

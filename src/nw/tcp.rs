@@ -40,8 +40,7 @@ pub async fn server_run<T: IServerEvent>(server: Arc<Ptr<Server<T>>>) -> io::Res
                 let timeout = server.timeout;
 
                 tokio::spawn(async move {
-                    conn_handle(stream, timeout, shutdown, event).await;
-                    drop(permit);
+                    conn_handle(stream, timeout, shutdown, event, permit).await;
                 });
             }
 
@@ -62,6 +61,7 @@ pub async fn conn_handle<T: IEvent>(
     timeout: u64,
     mut shutdown: broadcast::Receiver<u8>,
     event: T,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) {
     let mut conn = CONN_POOL.pull();
     conn.load_from(&stream);
@@ -141,5 +141,6 @@ pub async fn conn_handle<T: IEvent>(
         }
     }
 
+    drop(permit);
     event.on_disconnected(&conn).await;
 }

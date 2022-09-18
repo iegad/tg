@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use tg::{nw::pack, utils};
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct EchoEvent;
 
 #[async_trait]
