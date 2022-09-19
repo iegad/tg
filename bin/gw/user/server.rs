@@ -12,19 +12,19 @@ pub struct UserEvent;
 
 #[async_trait]
 impl nw::IEvent for UserEvent {
-    type U = i32;
+    type U = ();
 
     async fn on_process(
         &self,
-        _conn: &tg::nw::Conn<i32>,
+        _conn: &tg::nw::Conn<()>,
         req: &pack::Package,
     ) -> tg::g::Result<Option<Bytes>> {
         // tracing::debug!("[{:?}] => {:?}", conn.remote(), req);
         Ok(Some(req.to_bytes().freeze()))
     }
 
-    fn conn_pool(&self) -> &LinearObjectPool<tg::nw::Conn<i32>> {
-        static mut INSTANCE: MaybeUninit<LinearObjectPool<tg::nw::Conn<i32>>> =
+    fn conn_pool(&self) -> &LinearObjectPool<tg::nw::Conn<()>> {
+        static mut INSTANCE: MaybeUninit<LinearObjectPool<tg::nw::Conn<()>>> =
             MaybeUninit::uninit();
         static ONCE: Once = Once::new();
 

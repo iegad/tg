@@ -1,10 +1,9 @@
-use bytes::{Buf, BufMut, BytesMut};
-use lockfree_object_pool::{LinearObjectPool};
-use std::{mem::{size_of, MaybeUninit}, sync::Once};
-use type_layout::TypeLayout;
-use lazy_static::lazy_static;
-
 use crate::g;
+use bytes::{Buf, BufMut, BytesMut};
+use lazy_static::lazy_static;
+use lockfree_object_pool::LinearObjectPool;
+use std::mem::size_of;
+use type_layout::TypeLayout;
 
 #[derive(TypeLayout, Debug)]
 #[repr(C)]
@@ -18,7 +17,11 @@ pub struct Package {
 }
 
 lazy_static! {
-    static ref REQ_POOL: LinearObjectPool<Package> =
+    pub(crate) static ref PACK_POOL: LinearObjectPool<Package> =
+        LinearObjectPool::new(|| Package::new(), |v| { v.reset() });
+    pub static ref REQ_POOL: LinearObjectPool<Package> =
+        LinearObjectPool::new(|| Package::new(), |v| { v.reset() });
+    pub static ref RSP_POOL: LinearObjectPool<Package> =
         LinearObjectPool::new(|| Package::new(), |v| { v.reset() });
 }
 
@@ -31,20 +34,6 @@ impl Package {
     pub const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
     const HEAD_16_KEY: u16 = 0x0A0B;
     const HEAD_32_KEY: u32 = 0x0C0D0E0F;
-
-    pub fn req_pool() -> &'static LinearObjectPool<Package> {
-        static mut INSTANCE: MaybeUninit<LinearObjectPool<Package>> = MaybeUninit::uninit();
-        static ONCE: Once = Once::new();
-    
-        ONCE.call_once(|| unsafe {
-            INSTANCE.as_mut_ptr().write(LinearObjectPool::new(
-                || Package::new(),
-                |v| v.reset(),
-            ));
-        });
-    
-        unsafe { &*INSTANCE.as_ptr()}
-    }
 
     pub fn new() -> Self {
         Self {
@@ -290,10 +279,9 @@ impl Package {
 
 #[cfg(test)]
 mod pack_test {
+    use super::Package;
     use bytes::{BufMut, BytesMut};
     use type_layout::TypeLayout;
-    use crate::utils;
-    use super::Package;
 
     #[test]
     fn test_package_info() {
@@ -304,21 +292,6 @@ mod pack_test {
         );
         let p = Package::with_params(1, 2, 3, 4, b"Hello world");
         println!("{:?}", p);
-    }
-
-    #[test]
-    fn test_package_performance() {
-        let beg = utils::now_unix_nanos();
-        for i in 0..1_000_000 {
-            let p1 = Package::with_params(1, 2, i + 2, i + 1, b"Hello world");
-            let mut buf = p1.to_bytes();
-            let p2 = Package::from(&mut buf).unwrap();
-            assert_eq!(format!("{:?}", p1), format!("{:?}", p2));
-        }
-        println!(
-            "--->>> 百万级测试用时: {} ns",
-            utils::now_unix_nanos() - beg
-        );
     }
 
     #[test]

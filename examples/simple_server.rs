@@ -10,18 +10,18 @@ struct SimpleEvent;
 
 #[async_trait]
 impl tg::nw::IEvent for SimpleEvent {
-    type U = i32;
+    type U = ();
 
     async fn on_process(
         &self,
-        conn: &tg::nw::Conn<i32>,
+        conn: &tg::nw::Conn<()>,
         req: &pack::Package,
     ) -> tg::g::Result<Option<Bytes>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
         Ok(None)
     }
 
-    async fn on_disconnected(&self, conn: &tg::nw::Conn<i32>) {
+    async fn on_disconnected(&self, conn: &tg::nw::Conn<()>) {
         println!(
             "[{}|{:?}] has disconnected: {}",
             conn.sockfd(),
@@ -31,8 +31,8 @@ impl tg::nw::IEvent for SimpleEvent {
         assert_eq!(10000, conn.recv_seq());
     }
 
-    fn conn_pool(&self) -> &LinearObjectPool<tg::nw::Conn<i32>> {
-        static mut INSTANCE: MaybeUninit<LinearObjectPool<tg::nw::Conn<i32>>> =
+    fn conn_pool(&self) -> &LinearObjectPool<tg::nw::Conn<()>> {
+        static mut INSTANCE: MaybeUninit<LinearObjectPool<tg::nw::Conn<()>>> =
             MaybeUninit::uninit();
         static ONCE: Once = Once::new();
 

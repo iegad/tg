@@ -13,7 +13,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    }
+    },
 };
 use tokio::{
     net::TcpStream,
@@ -95,7 +95,7 @@ pub fn bytes_to_sockaddr(buf: &[u8], port: u16) -> g::Result<SocketAddr> {
 
 #[async_trait]
 pub trait IEvent: Default + Send + Sync + Clone + 'static {
-    type U: Sync + Send;
+    type U: Sync + Send + Default;
 
     async fn on_error(&self, conn: &Conn<Self::U>, err: g::Err) {
         tracing::debug!("[{}|{:?}] => {:?}", conn.sockfd, conn.remote(), err);
@@ -209,7 +209,8 @@ where
     }
 }
 
-pub struct Conn<U> {
+#[repr(C)]
+pub struct Conn<U: Default> {
     #[cfg(unix)]
     sockfd: i32,
     #[cfg(windows)]
@@ -224,7 +225,7 @@ pub struct Conn<U> {
     user_data: Option<U>,
 }
 
-impl<U> Conn<U> {
+impl<U: Default> Conn<U> {
     pub fn new() -> Self {
         let (wch_sender, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
         Self {
@@ -242,18 +243,17 @@ impl<U> Conn<U> {
 
     pub fn load_from(&mut self, stream: &TcpStream) {
         stream.set_nodelay(true).unwrap();
-        
+
         #[cfg(unix)]
         {
-            use nix::sys::socket;
             self.sockfd = stream.as_raw_fd();
-            socket::setsockopt(self.sockfd, socket::sockopt::RcvBuf, &(1024 * 1024)).unwrap();
-            socket::setsockopt(self.sockfd, socket::sockopt::SndBuf, &(1024 * 1024)).unwrap();
         }
-        
+
         #[cfg(windows)]
-        {self.sockfd = stream.as_raw_socket();}
-        
+        {
+            self.sockfd = stream.as_raw_socket();
+        }
+
         self.remote = stream.peer_addr().unwrap();
         self.local = stream.local_addr().unwrap();
     }
@@ -332,17 +332,16 @@ impl<U> Conn<U> {
     }
 
     pub fn user_data(&self) -> Option<&U> {
-        match self.user_data.as_ref() {
-            None => None,
-            Some(v) => Some(v),
-        }
+        self.user_data.as_ref()
     }
 }
 
 #[cfg(test)]
 mod nw_test {
+    use super::Conn;
+
     #[test]
     fn conn_info() {
-        
+        println!("Conn<()> size: {}", std::mem::size_of::<Conn<()>>());
     }
 }
