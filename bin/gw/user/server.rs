@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use bytes::Bytes;
+use lockfree_object_pool::LinearObjectPool;
 use std::{mem::MaybeUninit, sync::Once};
 use tg::{
     g,
@@ -11,13 +12,29 @@ pub struct UserEvent;
 
 #[async_trait]
 impl nw::IEvent for UserEvent {
+    type U = i32;
+
     async fn on_process(
         &self,
-        _conn: &tg::nw::Conn,
+        _conn: &tg::nw::Conn<i32>,
         req: &pack::Package,
     ) -> tg::g::Result<Option<Bytes>> {
         // tracing::debug!("[{:?}] => {:?}", conn.remote(), req);
         Ok(Some(req.to_bytes().freeze()))
+    }
+
+    fn conn_pool(&self) -> &LinearObjectPool<tg::nw::Conn<i32>> {
+        static mut INSTANCE: MaybeUninit<LinearObjectPool<tg::nw::Conn<i32>>> =
+            MaybeUninit::uninit();
+        static ONCE: Once = Once::new();
+
+        ONCE.call_once(|| unsafe {
+            INSTANCE
+                .as_mut_ptr()
+                .write(LinearObjectPool::new(|| tg::nw::Conn::new(), |v| v.reset()));
+        });
+
+        unsafe { &*INSTANCE.as_ptr() }
     }
 }
 

@@ -1,8 +1,11 @@
-use super::{pack, Conn, IEvent, IServerEvent, Server};
+use super::{pack, IEvent, IServerEvent, Server};
 use crate::{g, us::Ptr};
 use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
-use std::sync::{atomic::Ordering, Arc};
+use std::{
+    mem::MaybeUninit,
+    sync::{atomic::Ordering, Arc, Once},
+};
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
@@ -11,13 +14,28 @@ use tokio::{
 };
 
 lazy_static! {
-    static ref CONN_POOL: LinearObjectPool<Conn> =
-        LinearObjectPool::new(|| Conn::new(), |v| { v.reset() });
     static ref REQ_POOL: LinearObjectPool<pack::Package> =
         LinearObjectPool::new(|| pack::Package::new(), |v| { v.reset() });
 }
 
-pub async fn server_run<T: IServerEvent>(server: Arc<Ptr<Server<T>>>) -> io::Result<()> {
+pub fn req_pool() -> &'static LinearObjectPool<pack::Package> {
+    static mut INSTANCE: MaybeUninit<LinearObjectPool<pack::Package>> = MaybeUninit::uninit();
+    static ONCE: Once = Once::new();
+
+    ONCE.call_once(|| unsafe {
+        INSTANCE.as_mut_ptr().write(LinearObjectPool::new(
+            || pack::Package::new(),
+            |v| v.reset(),
+        ));
+    });
+
+    unsafe { &*INSTANCE.as_ptr() }
+}
+
+pub async fn server_run<T>(server: Arc<Ptr<Server<T>>>) -> io::Result<()>
+where
+    T: IServerEvent,
+{
     let lfd = TcpSocket::new_v4()?;
     lfd.set_reuseport(true)?;
     lfd.set_reuseaddr(true)?;
@@ -56,21 +74,23 @@ pub async fn server_run<T: IServerEvent>(server: Arc<Ptr<Server<T>>>) -> io::Res
     Ok(())
 }
 
-pub async fn conn_handle<T: IEvent>(
+pub async fn conn_handle<T>(
     mut stream: TcpStream,
     timeout: u64,
     mut shutdown: broadcast::Receiver<u8>,
     event: T,
     permit: tokio::sync::OwnedSemaphorePermit,
-) {
-    let mut conn = CONN_POOL.pull();
+) where
+    T: IEvent,
+{
+    let mut conn = event.conn_pool().pull();
     conn.load_from(&stream);
 
     let (mut reader, mut writer) = stream.split();
     let tx = conn.sender();
     let mut rx = conn.receiver();
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(timeout));
-    let mut req = REQ_POOL.pull();
+    let mut req = req_pool().pull(); //REQ_POOL.pull();
 
     if let Err(_) = event.on_connected(&conn).await {
         return;

@@ -3,6 +3,7 @@ pub mod tcp;
 use crate::{g, us::Ptr};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
+use lockfree_object_pool::LinearObjectPool;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
     os::unix::prelude::AsRawFd,
@@ -91,20 +92,28 @@ pub fn bytes_to_sockaddr(buf: &[u8], port: u16) -> g::Result<SocketAddr> {
 
 #[async_trait]
 pub trait IEvent: Default + Send + Sync + Clone + 'static {
-    async fn on_error(&self, conn: &Conn, err: g::Err) {
+    type U: Sync + Send;
+
+    async fn on_error(&self, conn: &Conn<Self::U>, err: g::Err) {
         tracing::debug!("[{}|{:?}] => {:?}", conn.sockfd, conn.remote(), err);
     }
 
-    async fn on_connected(&self, conn: &Conn) -> g::Result<()> {
+    async fn on_connected(&self, conn: &Conn<Self::U>) -> g::Result<()> {
         tracing::debug!("[{}|{:?}] has connected", conn.sockfd, conn.remote());
         Ok(())
     }
 
-    async fn on_disconnected(&self, conn: &Conn) {
+    async fn on_disconnected(&self, conn: &Conn<Self::U>) {
         tracing::debug!("[{}|{:?}] has disconnected", conn.sockfd, conn.remote());
     }
 
-    async fn on_process(&self, conn: &Conn, req: &pack::Package) -> g::Result<Option<Bytes>>;
+    fn conn_pool(&self) -> &LinearObjectPool<Conn<Self::U>>;
+
+    async fn on_process(
+        &self,
+        conn: &Conn<Self::U>,
+        req: &pack::Package,
+    ) -> g::Result<Option<Bytes>>;
 }
 
 #[async_trait]
@@ -135,7 +144,10 @@ pub struct Server<T> {
 
 pub type ServerPtr<T> = Arc<Ptr<Server<T>>>;
 
-impl<T: IServerEvent> Server<T> {
+impl<T> Server<T>
+where
+    T: IServerEvent,
+{
     pub fn new(host: &'static str, max_connections: usize, timeout: u64) -> ServerPtr<T> {
         let (shutdown, _) = broadcast::channel(1);
 
@@ -175,7 +187,10 @@ impl<T: IServerEvent> Server<T> {
     }
 }
 
-impl<T: IServerEvent> Default for Server<T> {
+impl<T> Default for Server<T>
+where
+    T: IServerEvent,
+{
     fn default() -> Self {
         let (shutdown, _) = broadcast::channel(1);
 
@@ -191,7 +206,7 @@ impl<T: IServerEvent> Default for Server<T> {
     }
 }
 
-pub struct Conn {
+pub struct Conn<U> {
     #[cfg(unix)]
     sockfd: i32,
     idempoetnt: u32,
@@ -201,9 +216,10 @@ pub struct Conn {
     local: SocketAddr,
     wch_sender: broadcast::Sender<Bytes>,
     rbuf: BytesMut,
+    user_data: Option<U>,
 }
 
-impl Conn {
+impl<U> Conn<U> {
     pub fn new() -> Self {
         let (wch_sender, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
         Self {
@@ -215,6 +231,7 @@ impl Conn {
             local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
             wch_sender,
             rbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
+            user_data: None,
         }
     }
 
@@ -296,5 +313,16 @@ impl Conn {
     #[inline(always)]
     pub fn send_seq(&self) -> u32 {
         self.send_seq
+    }
+
+    pub fn set_user_data(&mut self, user_data: U) {
+        self.user_data = Some(user_data)
+    }
+
+    pub fn user_data(&self) -> Option<&U> {
+        match self.user_data.as_ref() {
+            None => None,
+            Some(v) => Some(v),
+        }
     }
 }
