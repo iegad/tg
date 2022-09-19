@@ -4,9 +4,12 @@ use crate::{g, us::Ptr};
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use lockfree_object_pool::LinearObjectPool;
+#[cfg(unix)]
+use std::os::unix::prelude::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::prelude::{AsRawSocket, RawSocket};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
-    os::unix::prelude::AsRawFd,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -209,6 +212,8 @@ where
 pub struct Conn<U> {
     #[cfg(unix)]
     sockfd: i32,
+    #[cfg(windows)]
+    sockfd: RawSocket,
     idempoetnt: u32,
     send_seq: u32,
     recv_seq: u32,
@@ -236,18 +241,19 @@ impl<U> Conn<U> {
     }
 
     pub fn load_from(&mut self, stream: &TcpStream) {
-        use nix::sys::socket;
-
-        #[cfg(unix)]
-        let sockfd = stream.as_raw_fd();
-
         stream.set_nodelay(true).unwrap();
+        
         #[cfg(unix)]
-        socket::setsockopt(sockfd, socket::sockopt::RcvBuf, &(1024 * 1024)).unwrap();
-        #[cfg(unix)]
-        socket::setsockopt(sockfd, socket::sockopt::SndBuf, &(1024 * 1024)).unwrap();
-
-        self.sockfd = stream.as_raw_fd();
+        {
+            use nix::sys::socket;
+            self.sockfd = stream.as_raw_fd();
+            socket::setsockopt(self.sockfd, socket::sockopt::RcvBuf, &(1024 * 1024)).unwrap();
+            socket::setsockopt(self.sockfd, socket::sockopt::SndBuf, &(1024 * 1024)).unwrap();
+        }
+        
+        #[cfg(windows)]
+        {self.sockfd = stream.as_raw_socket();}
+        
         self.remote = stream.peer_addr().unwrap();
         self.local = stream.local_addr().unwrap();
     }
@@ -272,6 +278,12 @@ impl<U> Conn<U> {
     #[inline(always)]
     #[cfg(unix)]
     pub fn sockfd(&self) -> i32 {
+        self.sockfd
+    }
+
+    #[inline(always)]
+    #[cfg(windows)]
+    pub fn sockfd(&self) -> RawSocket {
         self.sockfd
     }
 

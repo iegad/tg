@@ -37,6 +37,7 @@ where
     T: IServerEvent,
 {
     let lfd = TcpSocket::new_v4()?;
+    #[cfg(unix)]
     lfd.set_reuseport(true)?;
     lfd.set_reuseaddr(true)?;
     lfd.bind(server.host().parse().unwrap())?;
