@@ -13,7 +13,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    },
+    }
 };
 use tokio::{
     net::TcpStream,
@@ -336,5 +336,13 @@ impl<U> Conn<U> {
             None => None,
             Some(v) => Some(v),
         }
+    }
+}
+
+#[cfg(test)]
+mod nw_test {
+    #[test]
+    fn conn_info() {
+        
     }
 }

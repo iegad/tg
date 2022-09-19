@@ -54,14 +54,6 @@ async fn main() {
     let server =
         tg::nw::Server::<SimpleEvent>::new("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
 
-    let controller = server.clone();
-
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-        assert!(controller.running());
-        controller.shutdown();
-    });
-
     if let Err(err) = tg::nw::tcp::server_run(server).await {
         println!("{:?}", err);
     }

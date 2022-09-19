@@ -1,6 +1,8 @@
 use bytes::{Buf, BufMut, BytesMut};
-use std::mem::size_of;
+use lockfree_object_pool::{LinearObjectPool};
+use std::{mem::{size_of, MaybeUninit}, sync::Once};
 use type_layout::TypeLayout;
+use lazy_static::lazy_static;
 
 use crate::g;
 
@@ -15,6 +17,11 @@ pub struct Package {
     data: BytesMut,
 }
 
+lazy_static! {
+    static ref REQ_POOL: LinearObjectPool<Package> =
+        LinearObjectPool::new(|| Package::new(), |v| { v.reset() });
+}
+
 impl Package {
     pub const HEAD_SIZE: usize = size_of::<u16>()
         + size_of::<u16>()
@@ -24,6 +31,20 @@ impl Package {
     pub const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
     const HEAD_16_KEY: u16 = 0x0A0B;
     const HEAD_32_KEY: u32 = 0x0C0D0E0F;
+
+    pub fn req_pool() -> &'static LinearObjectPool<Package> {
+        static mut INSTANCE: MaybeUninit<LinearObjectPool<Package>> = MaybeUninit::uninit();
+        static ONCE: Once = Once::new();
+    
+        ONCE.call_once(|| unsafe {
+            INSTANCE.as_mut_ptr().write(LinearObjectPool::new(
+                || Package::new(),
+                |v| v.reset(),
+            ));
+        });
+    
+        unsafe { &*INSTANCE.as_ptr()}
+    }
 
     pub fn new() -> Self {
         Self {
@@ -271,9 +292,7 @@ impl Package {
 mod pack_test {
     use bytes::{BufMut, BytesMut};
     use type_layout::TypeLayout;
-
     use crate::utils;
-
     use super::Package;
 
     #[test]

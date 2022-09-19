@@ -1,36 +1,12 @@
 use super::{pack, IEvent, IServerEvent, Server};
 use crate::{g, us::Ptr};
-use lazy_static::lazy_static;
-use lockfree_object_pool::LinearObjectPool;
-use std::{
-    mem::MaybeUninit,
-    sync::{atomic::Ordering, Arc, Once},
-};
+use std::sync::{atomic::Ordering, Arc};
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
     select,
     sync::broadcast,
 };
-
-lazy_static! {
-    static ref REQ_POOL: LinearObjectPool<pack::Package> =
-        LinearObjectPool::new(|| pack::Package::new(), |v| { v.reset() });
-}
-
-pub fn req_pool() -> &'static LinearObjectPool<pack::Package> {
-    static mut INSTANCE: MaybeUninit<LinearObjectPool<pack::Package>> = MaybeUninit::uninit();
-    static ONCE: Once = Once::new();
-
-    ONCE.call_once(|| unsafe {
-        INSTANCE.as_mut_ptr().write(LinearObjectPool::new(
-            || pack::Package::new(),
-            |v| v.reset(),
-        ));
-    });
-
-    unsafe { &*INSTANCE.as_ptr() }
-}
 
 pub async fn server_run<T>(server: Arc<Ptr<Server<T>>>) -> io::Result<()>
 where
@@ -91,7 +67,7 @@ pub async fn conn_handle<T>(
     let tx = conn.sender();
     let mut rx = conn.receiver();
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(timeout));
-    let mut req = req_pool().pull(); //REQ_POOL.pull();
+    let mut req = pack::Package::req_pool().pull();
 
     if let Err(_) = event.on_connected(&conn).await {
         return;
