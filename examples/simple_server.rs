@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
-use tg::nw::pack;
+use tg::{nw::pack, utils};
 
 #[derive(Clone, Copy, Default)]
 struct SimpleEvent;
@@ -21,7 +21,7 @@ impl tg::nw::IEvent for SimpleEvent {
     }
 
     async fn on_disconnected(&self, conn: &tg::nw::Conn<()>) {
-        println!(
+        tracing::debug!(
             "[{}|{:?}] has disconnected: {}",
             conn.sockfd(),
             conn.remote(),
@@ -40,6 +40,8 @@ impl tg::nw::IServerEvent for SimpleEvent {}
 
 #[tokio::main]
 async fn main() {
+    utils::init_log(tracing::Level::DEBUG);
+
     let server =
         tg::nw::Server::<SimpleEvent>::new("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
 

@@ -1,3 +1,10 @@
+/// -----------------------------------
+/// nw 网络库
+/// author: iegad
+/// time:   2022-09-20
+/// update_timeline:
+/// | ---- time ---- | ---- editor ---- | ------------------- content -------------------
+
 pub mod pack;
 pub mod tcp;
 use crate::{g, us::Ptr};
@@ -20,9 +27,6 @@ use tokio::{
     sync::{broadcast, Semaphore},
 };
 
-// ----------------------------------- 工具函数 -----------------------------------
-//
-//
 /// # sockaddr_to_bytes
 ///
 /// 将 [std::net::SocketAddr] 转换成 IP字节和端口
@@ -93,23 +97,39 @@ pub fn bytes_to_sockaddr(buf: &[u8], port: u16) -> g::Result<SocketAddr> {
     Ok(SocketAddr::new(addr, port))
 }
 
+
+/// # IEvent 
+/// 
+/// 通用网络事件
+/// 
+/// 该特型内置一个泛型 U 参数, 代表用户自定义数据.
 #[async_trait]
 pub trait IEvent: Default + Send + Sync + Clone + 'static {
     type U: Sync + Send + Default;
-
+    
+    /// 连接套接字读错误事件
     async fn on_error(&self, conn: &Conn<Self::U>, err: g::Err) {
-        tracing::debug!("[{}|{:?}] => {:?}", conn.sockfd, conn.remote(), err);
+        tracing::error!("[{}|{:?}] => {:?}", conn.sockfd, conn.remote(), err);
     }
 
+    /// 连接套接字连接成功事件
+    /// 
+    /// 当连接套接字连接成功之后触发
     async fn on_connected(&self, conn: &Conn<Self::U>) -> g::Result<()> {
         tracing::debug!("[{}|{:?}] has connected", conn.sockfd, conn.remote());
         Ok(())
     }
 
+    /// 连接套接字连接断开事件
+    /// 
+    /// 当连接套接字连接断开之后, 资源释放之前触发
     async fn on_disconnected(&self, conn: &Conn<Self::U>) {
         tracing::debug!("[{}|{:?}] has disconnected", conn.sockfd, conn.remote());
     }
 
+    /// 连接套接字 package 处理过程
+    ///
+    /// 连接套接字读到完整 Package后触发
     async fn on_process(
         &self,
         conn: &Conn<Self::U>,
@@ -117,8 +137,12 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     ) -> g::Result<Option<Bytes>>;
 }
 
+/// # IServerEvent
+/// 
+/// 服务端网络事件, 该特形依赖 IEvent 通用网络事件. 即, IServerEvent实现比需同时实现 IEvent
 #[async_trait]
 pub trait IServerEvent: IEvent {
+    /// 服务端启动事件, 当服务端初始化完成, 监听前触发
     async fn on_runing(&self, server: ServerPtr<Self>) {
         tracing::debug!(
             "server[HOST:{}|MAX:{}|TIMOUT:{}] is running...",
@@ -128,27 +152,36 @@ pub trait IServerEvent: IEvent {
         );
     }
 
+    /// 服务端监听关闭后触发
     async fn on_stopped(&self, server: ServerPtr<Self>) {
         tracing::debug!("server[HOST:{}] has stopped...!!!", server.host);
     }
 }
 
+/// # Server<T>
+/// 
+/// 服务端
 pub struct Server<T> {
-    host: &'static str,
-    max_connections: usize,
-    timeout: u64,
-    limit_connections: Arc<Semaphore>,
-    event: T,
-    shutdown: broadcast::Sender<u8>,
-    running: AtomicBool,
+    event: T, // 事件句柄
+    host: &'static str, // 监听地址
+    max_connections: usize, // 最大连接数
+    timeout: u64, // 客户端读超时
+    running: AtomicBool, // 运行状态
+    limit_connections: Arc<Semaphore>, // 连接限制信号量
+    shutdown: broadcast::Sender<u8>, // 停止管道(发送端)
 }
 
+/// # ServerPtr<T>
+/// ServerPtr<T> 是 Arc<Ptr<Server<T>>> 别名.
+/// 
+/// Ptr是让 Server<T> 的不可变引用具有修改特证.
 pub type ServerPtr<T> = Arc<Ptr<Server<T>>>;
 
 impl<T> Server<T>
 where
     T: IServerEvent,
 {
+    /// 创建服务端
     pub fn new(host: &'static str, max_connections: usize, timeout: u64) -> ServerPtr<T> {
         let (shutdown, _) = broadcast::channel(1);
 
@@ -163,26 +196,38 @@ where
         })
     }
 
+    /// 监听地址
+    #[inline(always)]
     pub fn host(&self) -> &'static str {
         self.host
     }
 
+    /// 最大连接数
+    #[inline(always)]
     pub fn max_connections(&self) -> usize {
         self.max_connections
     }
 
+    /// 当前连接数
+    #[inline(always)]
     pub fn current_connections(&self) -> usize {
         self.max_connections - self.limit_connections.available_permits()
     }
 
+    /// 客户端读超时
+    #[inline(always)]
     pub fn timeout(&self) -> u64 {
         self.timeout
     }
 
+    /// 关闭服务
+    #[inline(always)]
     pub fn shutdown(&self) {
         self.shutdown.send(1).unwrap();
     }
 
+    /// 运行状态
+    #[inline(always)]
     pub fn running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
@@ -192,6 +237,7 @@ impl<T> Default for Server<T>
 where
     T: IServerEvent,
 {
+    /// Ptr<T> 泛型的 Default 约束
     fn default() -> Self {
         let (shutdown, _) = broadcast::channel(1);
 
@@ -207,24 +253,28 @@ where
     }
 }
 
+/// # Conn
+/// 
+/// 连接端
 #[repr(C)]
 pub struct Conn<U: Default> {
     #[cfg(unix)]
-    sockfd: i32,
+    sockfd: i32,                            // 类unix 平台下的原始socket
     #[cfg(windows)]
-    sockfd: RawSocket,
-    idempoetnt: u32,
-    send_seq: u32,
-    recv_seq: u32,
-    remote: SocketAddr,
-    local: SocketAddr,
-    wch_sender: broadcast::Sender<Bytes>,
-    rbuf: BytesMut,
-    user_data: Option<U>,
+    sockfd: RawSocket,                      // windows 平台下的原始socket
+    idempoetnt: u32,                        // 最后幂等值
+    send_seq: u32,                          // 发送序列
+    recv_seq: u32,                          // 接收序列
+    remote: SocketAddr,                     // 远端地址
+    local: SocketAddr,                      // 本端地址
+    wch_sender: broadcast::Sender<Bytes>,   // 发送管道
+    rbuf: BytesMut,                         // 读缓冲区
+    user_data: Option<U>,                   // 用户数据
 }
 
 impl<U: Default> Conn<U> {
-    pub fn new() -> Self {
+    /// 创建默认连接端
+    fn new() -> Self {
         let (wch_sender, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
         Self {
             sockfd: 0,
@@ -239,11 +289,29 @@ impl<U: Default> Conn<U> {
         }
     }
 
+    /// 创建默认连接端对象池
+    /// 
+    /// @PS: 目前RUST不支持 静态全局变量中有泛型参数, 所以只能提供一个创建对象池的方法, 然后在业务实中创建静态对象池.
+    /// 
+    /// 不支持的语法:
+    /// 
+    ///    1, static POOL<T>: LinearObjectPool<Conn<T>> = LinearObjectPool::new(...);
+    /// 
+    ///    2, static POOL: LinearObjectPool<Conn<T>> = LinearObjectPool::new(...);
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// lazy_static::lazy_static! {
+    ///     static ref CONN_POOL: lockfree_object_pool::LinearObjectPool<tg::nw::Conn<()>> = tg::nw::Conn::<()>::pool();
+    /// }
+    /// ```
     pub fn pool() -> LinearObjectPool<Self> {
         LinearObjectPool::new(||Self::new(), |v|{v.reset();})
     }
 
-    pub fn load_from(&mut self, stream: &TcpStream) {
+    /// 通过stream 加载Conn的参数, 只有 load_from之后, Conn<U>对象才能变得有效
+    fn load_from(&mut self, stream: &TcpStream) {
         stream.set_nodelay(true).unwrap();
 
         #[cfg(unix)]
@@ -260,8 +328,9 @@ impl<U: Default> Conn<U> {
         self.local = stream.local_addr().unwrap();
     }
 
+    /// 重置 Conn<U>, 使用无效
     #[inline(always)]
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.sockfd = 0;
         self.idempoetnt = 0;
         self.send_seq = 0;
@@ -269,8 +338,11 @@ impl<U: Default> Conn<U> {
         self.user_data = None;
     }
 
+    /// 检测读缓冲区.
+    /// 
+    /// 随着连接端不断的读到消息, 读缓冲区的会越来越小, 所以读缓冲区一旦小于 消息头大小时需要重新分配读缓冲区空间
     #[inline(always)]
-    pub fn check_rbuf(&mut self) {
+    fn check_rbuf(&mut self) {
         let n = self.rbuf.len();
         if n < pack::Package::HEAD_SIZE {
             self.rbuf.resize(g::DEFAULT_BUF_SIZE, 0);
@@ -330,10 +402,12 @@ impl<U: Default> Conn<U> {
         self.send_seq
     }
 
+    #[inline(always)]
     pub fn set_user_data(&mut self, user_data: U) {
         self.user_data = Some(user_data)
     }
 
+    #[inline(always)]
     pub fn user_data(&self) -> Option<&U> {
         self.user_data.as_ref()
     }
@@ -345,6 +419,10 @@ mod nw_test {
 
     #[test]
     fn conn_info() {
-        println!("Conn<()> size: {}", std::mem::size_of::<Conn<()>>());
+        println!(
+        "* --------- Conn INFO BEGIN ---------\n\
+         Conn<()> size: {}\n\
+         * --------- Conn INFO END ---------\n", 
+        std::mem::size_of::<Conn<()>>());
     }
 }

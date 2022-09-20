@@ -104,26 +104,29 @@ impl Package {
     /// 通过 rbuf 缓冲区构建 pack
     #[inline(always)]
     pub fn parse(rbuf: &mut BytesMut, pack: &mut Self) -> g::Result<()> {
-        if rbuf.len() == 0 {
-            return Err(g::Err::PackDataSizeInvalid);
+        if pack.valid() {
+            return Ok(())
         }
 
         if pack.head_valid() {
-            if !pack.valid() {
-                pack.fill_data(rbuf);
-            }
-        } else {
-            if rbuf.len() < Self::HEAD_SIZE {
+            if rbuf.len() == 0 {
                 return Err(g::Err::PackDataSizeInvalid);
             }
-            pack.from_buf(rbuf)?;
+
+            pack.fill_data(rbuf);
+            return Ok(())
         }
 
+        if rbuf.len() < Self::HEAD_SIZE {
+            return Err(g::Err::PackDataSizeInvalid);
+        }
+
+        pack.from_buf(rbuf)?;
         Ok(())
     }
 
-    /// 通过BytesMut 缓冲区 创建 Package
-    pub fn from(rbuf: &mut BytesMut) -> g::Result<Self> {
+    /// 反序列化, rbuf 缓冲区中必需有一个完整的包
+    pub fn from_bytes(rbuf: &mut BytesMut) -> g::Result<Self> {
         if rbuf.len() < Self::HEAD_SIZE {
             return Err(g::Err::PackHeadInvalid("Head Size is invalid"));
         }
@@ -149,15 +152,19 @@ impl Package {
         }
 
         let raw_len = (rbuf.get_u32_le() ^ Self::HEAD_32_KEY) as usize;
+        if raw_len < Self::HEAD_SIZE {
+            return Err(g::Err::PackHeadInvalid("Package is illegal"));
+        }
+
+        if raw_len > Self::HEAD_SIZE + Self::MAX_DATA_SIZE {
+            return Err(g::Err::PackDataSizeInvalid);
+        }
+
         let data_len = raw_len - Self::HEAD_SIZE;
 
-        let data = if data_len == 0 {
-            BytesMut::new()
-        } else if data_len <= rbuf.len() {
-            rbuf.split_to(data_len)
-        } else {
+        if data_len > rbuf.len() {
             return Err(g::Err::PackDataSizeInvalid);
-        };
+        }
 
         Ok(Self {
             service_id,
@@ -165,12 +172,12 @@ impl Package {
             router_id,
             idempotent,
             raw_len,
-            data,
+            data: rbuf.split_to(data_len),
         })
     }
 
     /// 通过BytesMut 缓冲区构建当前 Package对象
-    pub fn from_buf(&mut self, rbuf: &mut BytesMut) -> g::Result<()> {
+    fn from_buf(&mut self, rbuf: &mut BytesMut) -> g::Result<()> {
         if rbuf.len() < Self::HEAD_SIZE {
             return Err(g::Err::PackHeadInvalid("Head Size is invalid"));
         }
@@ -196,16 +203,47 @@ impl Package {
         }
 
         self.raw_len = (rbuf.get_u32_le() ^ Self::HEAD_32_KEY) as usize;
+        if self.raw_len < Self::HEAD_SIZE {
+            return Err(g::Err::PackHeadInvalid("Package is illegal"));
+        }
+
+        if self.raw_len > Self::HEAD_SIZE + Self::MAX_DATA_SIZE {
+            return Err(g::Err::PackDataSizeInvalid);
+        }
+
         if self.raw_len > Self::HEAD_SIZE {
+            let rbuf_len = rbuf.len();
             let mut data_len = self.raw_len - Self::HEAD_SIZE;
-            if rbuf.len() < data_len {
-                data_len = rbuf.len();
+            if rbuf_len < data_len {
+                data_len = rbuf_len;
             }
 
             self.data = rbuf.split_to(data_len);
         }
-
+        
         Ok(())
+    }
+
+    /// 按需填充消息体, 当该包被加载不完全时调用.
+    /// 
+    /// 当包的消息头已构建, 但是消息体不全时调用此方法.
+    /// 
+    /// 如果 rbuf 缓冲区的内容大于 当前Package 消息体所需长度时, 消息体只会从rbuf 中消费掉需要的数据长度.
+    /// 
+    /// 该函数不同于[append_data], 该函数是在接收包时构建Package中使用.
+    #[inline(always)]
+    fn fill_data(&mut self, rbuf: &mut BytesMut) {
+        debug_assert!(self.head_valid());
+
+        let rbuf_len = rbuf.len();
+
+        let mut left_len = self.raw_len - Self::HEAD_SIZE - self.data.len();
+        if left_len > rbuf_len {
+            left_len = rbuf_len;
+        }
+
+        self.data.extend_from_slice(&rbuf[0..left_len]);
+        rbuf.advance(left_len);
     }
 
     /// 重置 Package
@@ -218,6 +256,7 @@ impl Package {
     #[inline(always)]
     pub fn to_bytes(&self) -> BytesMut {
         let mut wbuf = BytesMut::with_capacity(self.raw_len);
+
         wbuf.put_u16_le(self.service_id ^ Self::HEAD_16_KEY);
         wbuf.put_u16_le(self.package_id ^ Self::HEAD_16_KEY);
         wbuf.put_u32_le(self.router_id ^ Self::HEAD_32_KEY);
@@ -228,28 +267,6 @@ impl Package {
         }
 
         wbuf
-    }
-
-    /// 按需填充消息体, 当该包被半加载时调用.
-    /// 
-    /// 当包的消息头已构建, 但是消息体不全时调用此方法.
-    /// 
-    /// 如果 rbuf 缓冲区的内容大于 当前Package 消息体所需长度时, 消息体只会从rbuf 中消费掉需要的数据长度.
-    /// 
-    /// 该函数不同于[append_data], 该函数是在接收包时构建Package中使用.
-    #[inline(always)]
-    pub fn fill_data(&mut self, rbuf: &mut BytesMut) {
-        debug_assert!(self.head_valid());
-
-        let rbuf_len = rbuf.len();
-
-        let mut left_len = self.raw_len - Self::HEAD_SIZE - self.data.len();
-        if left_len > rbuf_len {
-            left_len = rbuf_len;
-        }
-
-        self.data.extend_from_slice(&rbuf[0..left_len]);
-        rbuf.advance(left_len);
     }
 
     /// 追加数据到消息体中
@@ -344,17 +361,19 @@ mod pack_test {
 
     #[test]
     fn test_package_info() {
-        println!("-------------->> layout:\n{}", Package::type_layout());
         println!(
-            "-------------->> package size [{}]",
-            std::mem::size_of::<Package>()
-        );
-        let p = Package::with_params(1, 2, 3, 4, b"Hello world");
-        println!("{:?}", p);
+       "* --------- PACKAGE INFO BEGIN ---------\n\
+        * Layout: {}\n\
+        * Demo: {:#?}\n\
+        * --------- PACKAGE INFO END ---------\n", 
+        Package::type_layout(), 
+        Package::with_params(1, 2, 3, 4, b"Hello world"));
     }
 
     #[test]
     fn test_package() {
+        let data = "Hello world";
+
         let mut p1 = Package::new();
         assert!(!p1.valid());
 
@@ -362,45 +381,58 @@ mod pack_test {
         p1.set_package_id(2);
         p1.set_router_id(3);
         p1.set_idempotent(4);
-        p1.set_data(b"Hello world");
+        p1.set_data(data.as_bytes());
 
         assert!(p1.valid());
         assert_eq!(p1.service_id(), 1);
         assert_eq!(p1.package_id(), 2);
         assert_eq!(p1.router_id(), 3);
-        assert_eq!(p1.data().len(), 11);
-        assert_eq!(p1.raw_len(), 27);
-        assert_eq!(std::str::from_utf8(p1.data()).unwrap(), "Hello world");
+        assert_eq!(p1.data().len(), data.len());
+        assert_eq!(p1.raw_len(), data.len() + Package::HEAD_SIZE);
+        assert_eq!(std::str::from_utf8(p1.data()).unwrap(), data);
 
-        let p2 = Package::with_params(1, 2, 3, 4, b"Hello world");
+        let p2 = Package::with_params(1, 2, 3, 4, data.as_bytes());
         assert!(p2.valid());
         assert_eq!(p2.service_id(), 1);
         assert_eq!(p2.package_id(), 2);
         assert_eq!(p2.router_id(), 3);
-        assert_eq!(p2.data().len(), 11);
-        assert_eq!(p2.raw_len(), 27);
-        assert_eq!(std::str::from_utf8(p2.data()).unwrap(), "Hello world");
+        assert_eq!(p2.data().len(), data.len());
+        assert_eq!(p2.raw_len(), data.len() + Package::HEAD_SIZE);
+        assert_eq!(std::str::from_utf8(p2.data()).unwrap(), data);
 
         let mut iobuf = BytesMut::with_capacity(1500);
-
         let buf = p1.to_bytes();
         iobuf.put(&buf[..]);
-        println!("+++ start pos: {:p}", &iobuf[0]);
+        let iobuf_pos = &iobuf[0] as *const u8;
+        assert_eq!(iobuf.capacity(), 1500);
+        assert_eq!(iobuf.len(), buf.len());
+        assert_eq!(buf.len(), data.len() + Package::HEAD_SIZE);
 
-        println!(">>>> before ----- CAP: {}", iobuf.capacity());
-        assert_eq!(buf.len(), 27);
-
-        let p3 = Package::from(&mut iobuf).unwrap();
+        let p3 = Package::from_bytes(&mut iobuf).unwrap();
+        assert_eq!(iobuf.capacity(), 1500 - buf.len());
 
         iobuf.put_bytes(0, 1);
-        println!(">>>> after ----- CAP: {}", iobuf.capacity());
-        println!("+++ start pos: {:p}", &iobuf[0]);
+        let iobuf_pos_ = &iobuf[0] as *const u8;
+        assert_eq!(iobuf_pos_ as usize - iobuf_pos as usize, buf.len());
+
         assert!(p3.valid());
         assert_eq!(p3.service_id(), 1);
         assert_eq!(p3.package_id(), 2);
         assert_eq!(p3.router_id(), 3);
         assert_eq!(p3.data().len(), 11);
         assert_eq!(p3.raw_len(), 27);
-        assert_eq!(std::str::from_utf8(p3.data()).unwrap(), "Hello world");
+        assert_eq!(std::str::from_utf8(p3.data()).unwrap(), data);
+
+        let mut p4 = Package::new();
+        let mut buf = p3.to_bytes();
+        p4.from_buf(&mut buf).unwrap();
+
+        assert!(p4.valid());
+        assert_eq!(p4.service_id(), 1);
+        assert_eq!(p4.package_id(), 2);
+        assert_eq!(p4.router_id(), 3);
+        assert_eq!(p4.data().len(), 11);
+        assert_eq!(p4.raw_len(), 27);
+        assert_eq!(std::str::from_utf8(p4.data()).unwrap(), data);
     }
 }
