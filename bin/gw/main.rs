@@ -41,6 +41,7 @@ async fn stop() -> &'static str {
         return "UserServer is not running yet";
     }
 
-    UserServer::stop(server);
+    UserServer::stop(server.clone());
+    server.wait().await;
     "OK"
 }

@@ -33,6 +33,11 @@ where
 
     'accept_loop: loop {
         select! {
+            _ = shutdown.recv() => {
+                tracing::debug!("accept_loop is breaking...");
+                break 'accept_loop;
+            }
+
             result_accept = listener.accept() => {
                 let (stream, _) =  result_accept?;
                 let permit = server.limit_connections.clone().acquire_owned().await.unwrap();
@@ -42,11 +47,6 @@ where
                 tokio::spawn(async move {
                     conn_handle(stream, conn_pool, timeout, shutdown, event, permit).await;
                 });
-            }
-
-            _ = shutdown.recv() => {
-                tracing::debug!("accept_loop is breaking...");
-                break 'accept_loop;
             }
         }
     }

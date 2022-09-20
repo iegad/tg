@@ -181,7 +181,7 @@ where
 {
     /// 创建服务端
     pub fn new(host: &'static str, max_connections: usize, timeout: u64) -> ServerPtr<T> {
-        let (shutdown, _) = broadcast::channel(1);
+        let (shutdown, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
 
         Ptr::parse(Self {
             host,
@@ -228,13 +228,14 @@ where
     #[inline(always)]
     pub fn shutdown(&self) {
         assert!(self.running());
-        self.shutdown.send(1).unwrap();
+        if let Err(err) = self.shutdown.send(1) {
+            tracing::error!("server.shutdown failed: {:?}", err);
+        }
     }
 
-    #[inline(always)]
     pub async fn wait(&self) {
-        while self.max_connections > self.limit_connections.available_permits() {
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        while self.max_connections > self.limit_connections.available_permits() || self.running() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     }
 }
