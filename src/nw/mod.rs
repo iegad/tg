@@ -264,6 +264,7 @@ impl<U: Default> Conn<U> {
         self.idempoetnt = 0;
         self.send_seq = 0;
         self.recv_seq = 0;
+        self.user_data = None;
     }
 
     #[inline(always)]
