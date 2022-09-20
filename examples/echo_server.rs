@@ -3,6 +3,7 @@ use bytes::Bytes;
 use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
 use tg::{nw::pack, utils};
+use tokio::{select, signal};
 
 #[derive(Clone, Default)]
 struct EchoEvent;
@@ -42,7 +43,19 @@ async fn main() {
     utils::init_log(tracing::Level::DEBUG);
 
     let server = tg::nw::Server::<EchoEvent>::new("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
-    if let Err(err) = tg::nw::tcp::server_run(server.clone(), &CONN_POOL).await {
-        println!("{:?}", err);
+
+    select! {
+        result = tg::nw::tcp::server_run(server.clone(), &CONN_POOL) => {
+            if let Err(err) = result {
+                tracing::error!("{:?}", err);
+            }
+        }
+
+        _ = signal::ctrl_c() => {
+            tracing::debug!("shutdown....");
+            server.shutdown();
+        }
     }
+
+    server.wait().await;
 }

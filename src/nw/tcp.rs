@@ -1,7 +1,7 @@
 use super::{pack, IEvent, IServerEvent, Server};
 use crate::{g, us::Ptr};
+use lockfree_object_pool::LinearObjectPool;
 use std::sync::{atomic::Ordering, Arc};
-use lockfree_object_pool::{LinearObjectPool};
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
@@ -9,10 +9,13 @@ use tokio::{
     sync::broadcast,
 };
 
-pub async fn server_run<T>(server: Arc<Ptr<Server<T>>>, conn_pool: &'static LinearObjectPool<super::Conn<T::U>>) -> io::Result<()>
+pub async fn server_run<T>(
+    server: Arc<Ptr<Server<T>>>,
+    conn_pool: &'static LinearObjectPool<super::Conn<T::U>>,
+) -> io::Result<()>
 where
     T: IServerEvent,
-    T::U: Default + Sync + Send
+    T::U: Default + Sync + Send,
 {
     let lfd = TcpSocket::new_v4()?;
 
@@ -42,6 +45,7 @@ where
             }
 
             _ = shutdown.recv() => {
+                tracing::debug!("accept_loop is breaking...");
                 break 'accept_loop;
             }
         }
@@ -67,8 +71,9 @@ pub async fn conn_handle<T>(
     conn.load_from(&stream);
 
     let (mut reader, mut writer) = stream.split();
-    let tx = conn.sender();
-    let mut rx = conn.receiver();
+    let w_tx = conn.wbuf_sender();
+    let mut w_rx = conn.wbuf_receiver();
+    let mut shutdown_rx = conn.shutdown_receiver();
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(timeout));
     let mut req = pack::PACK_POOL.pull();
 
@@ -81,6 +86,11 @@ pub async fn conn_handle<T>(
 
         select! {
             _ = shutdown.recv() => {
+                conn.shutdown();
+            }
+
+            _ = shutdown_rx.recv() => {
+                tracing::debug!("[{}|{:?}] conn_loop is breaking...", conn.sockfd, conn.remote);
                 break 'conn_loop;
             }
 
@@ -89,7 +99,7 @@ pub async fn conn_handle<T>(
                 break 'conn_loop;
             }
 
-            result_wbuf = rx.recv() => {
+            result_wbuf = w_rx.recv() => {
                 let wbuf = match result_wbuf {
                     Err(err) => panic!("wch recv failed: {:?}", err),
                     Ok(v) => v,
@@ -122,7 +132,7 @@ pub async fn conn_handle<T>(
 
                         req.reset();
                         if let Some(rsp) = option_rsp {
-                            tx.send(rsp).unwrap();
+                            w_tx.send(rsp).unwrap();
                         }
                     } else {
                         if let Err(err) = pack::Package::parse(conn.rbuf_mut(), &mut req) {

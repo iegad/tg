@@ -4,7 +4,6 @@
 /// time:   2022-09-20
 /// update_timeline:
 /// | ---- time ---- | ---- editor ---- | ------------------- content -------------------
-
 use crate::g;
 use bytes::{Buf, BufMut, BytesMut};
 use lazy_static::lazy_static;
@@ -13,21 +12,21 @@ use std::mem::size_of;
 use type_layout::TypeLayout;
 
 /// # Package 消息包
-/// 
+///
 /// 用于分布式网络通信
-/// 
+///
 /// 消息包由消息头与消息体组成
-/// 
+///
 /// ## 消息头包含以下五个字段:
-/// 
+///
 /// [service_id]: 16位: 服务ID, 确定所调用的服务
-/// 
+///
 /// [package_id]: 16位: 消息ID, 确定所调用服务的业务句柄
-/// 
+///
 /// [router_id]:  32位: 路由ID, 确定所调用服务的节点
-/// 
+///
 /// [idempotent]: 32位: 幂等
-/// 
+///
 /// [raw_len]:    32位: 消息长度, 包括消息头16字节与消息体长度
 #[derive(TypeLayout, Debug)]
 #[repr(C)]
@@ -61,7 +60,7 @@ impl Package {
         + size_of::<u32>()
         + size_of::<u32>()
         + size_of::<u32>();
-    
+
     /// 消息体最大长度: 1G
     pub const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
 
@@ -105,7 +104,7 @@ impl Package {
     #[inline(always)]
     pub fn parse(rbuf: &mut BytesMut, pack: &mut Self) -> g::Result<()> {
         if pack.valid() {
-            return Ok(())
+            return Ok(());
         }
 
         if pack.head_valid() {
@@ -114,7 +113,7 @@ impl Package {
             }
 
             pack.fill_data(rbuf);
-            return Ok(())
+            return Ok(());
         }
 
         if rbuf.len() < Self::HEAD_SIZE {
@@ -220,16 +219,16 @@ impl Package {
 
             self.data = rbuf.split_to(data_len);
         }
-        
+
         Ok(())
     }
 
     /// 按需填充消息体, 当该包被加载不完全时调用.
-    /// 
+    ///
     /// 当包的消息头已构建, 但是消息体不全时调用此方法.
-    /// 
+    ///
     /// 如果 rbuf 缓冲区的内容大于 当前Package 消息体所需长度时, 消息体只会从rbuf 中消费掉需要的数据长度.
-    /// 
+    ///
     /// 该函数不同于[append_data], 该函数是在接收包时构建Package中使用.
     #[inline(always)]
     fn fill_data(&mut self, rbuf: &mut BytesMut) {
@@ -270,7 +269,7 @@ impl Package {
     }
 
     /// 追加数据到消息体中
-    /// 
+    ///
     /// 该函数不同于[fill_data], 该函数是在主动发包时构建Package中使用.
     #[inline(always)]
     pub fn append_data(&mut self, data: &[u8]) {
@@ -362,12 +361,13 @@ mod pack_test {
     #[test]
     fn test_package_info() {
         println!(
-       "* --------- PACKAGE INFO BEGIN ---------\n\
+            "* --------- PACKAGE INFO BEGIN ---------\n\
         * Layout: {}\n\
         * Demo: {:#?}\n\
-        * --------- PACKAGE INFO END ---------\n", 
-        Package::type_layout(), 
-        Package::with_params(1, 2, 3, 4, b"Hello world"));
+        * --------- PACKAGE INFO END ---------\n",
+            Package::type_layout(),
+            Package::with_params(1, 2, 3, 4, b"Hello world")
+        );
     }
 
     #[test]
