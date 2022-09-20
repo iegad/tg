@@ -5,6 +5,21 @@ use lockfree_object_pool::LinearObjectPool;
 use std::mem::size_of;
 use type_layout::TypeLayout;
 
+/// Package 消息包, 用于分布式网络通信
+/// 
+/// 消息包由消息头与消息体组成
+/// 
+/// 消息头包含以下五个字段:
+/// 
+/// [service_id]: 16位: 服务ID, 确定所调用的服务
+/// 
+/// [package_id]: 16位: 消息ID, 确定所调用服务的业务句柄
+/// 
+/// [router_id]:  32位: 路由ID, 确定所调用服务的节点
+/// 
+/// [idempotent]: 32位: 幂等
+/// 
+/// [raw_len]:    32位: 消息长度
 #[derive(TypeLayout, Debug)]
 #[repr(C)]
 pub struct Package {

@@ -1,6 +1,7 @@
 use super::{pack, IEvent, IServerEvent, Server};
 use crate::{g, us::Ptr};
 use std::sync::{atomic::Ordering, Arc};
+use lockfree_object_pool::{LinearObjectPool};
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
@@ -8,9 +9,10 @@ use tokio::{
     sync::broadcast,
 };
 
-pub async fn server_run<T>(server: Arc<Ptr<Server<T>>>) -> io::Result<()>
+pub async fn server_run<T>(server: Arc<Ptr<Server<T>>>, conn_pool: &'static LinearObjectPool<super::Conn<T::U>>) -> io::Result<()>
 where
     T: IServerEvent,
+    T::U: Default + Sync + Send
 {
     let lfd = TcpSocket::new_v4()?;
 
@@ -34,9 +36,8 @@ where
                 let event = server.event.clone();
                 let shutdown = notify_shutdown.subscribe();
                 let timeout = server.timeout;
-
                 tokio::spawn(async move {
-                    conn_handle(stream, timeout, shutdown, event, permit).await;
+                    conn_handle(stream, conn_pool, timeout, shutdown, event, permit).await;
                 });
             }
 
@@ -54,6 +55,7 @@ where
 
 pub async fn conn_handle<T>(
     mut stream: TcpStream,
+    conn_pool: &'static LinearObjectPool<super::Conn<T::U>>,
     timeout: u64,
     mut shutdown: broadcast::Receiver<u8>,
     event: T,
@@ -61,7 +63,7 @@ pub async fn conn_handle<T>(
 ) where
     T: IEvent,
 {
-    let mut conn = event.conn_pool().pull();
+    let mut conn = conn_pool.pull();
     conn.load_from(&stream);
 
     let (mut reader, mut writer) = stream.split();

@@ -1,11 +1,16 @@
 use async_trait::async_trait;
 use bytes::Bytes;
+use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
 use std::{mem::MaybeUninit, sync::Once};
 use tg::{
     g,
     nw::{self, pack},
 };
+
+lazy_static! {
+    static ref CONN_POOL: LinearObjectPool<tg::nw::Conn<()>> = tg::nw::Conn::<()>::pool();
+}
 
 #[derive(Clone, Copy, Default)]
 pub struct UserEvent;
@@ -21,20 +26,6 @@ impl nw::IEvent for UserEvent {
     ) -> tg::g::Result<Option<Bytes>> {
         // tracing::debug!("[{:?}] => {:?}", conn.remote(), req);
         Ok(Some(req.to_bytes().freeze()))
-    }
-
-    fn conn_pool(&self) -> &LinearObjectPool<tg::nw::Conn<()>> {
-        static mut INSTANCE: MaybeUninit<LinearObjectPool<tg::nw::Conn<()>>> =
-            MaybeUninit::uninit();
-        static ONCE: Once = Once::new();
-
-        ONCE.call_once(|| unsafe {
-            INSTANCE
-                .as_mut_ptr()
-                .write(LinearObjectPool::new(|| tg::nw::Conn::new(), |v| v.reset()));
-        });
-
-        unsafe { &*INSTANCE.as_ptr() }
     }
 }
 
@@ -56,7 +47,7 @@ impl UserServer {
     pub fn run(server: nw::ServerPtr<UserEvent>) {
         let server_copy = server.clone();
         tokio::spawn(async move {
-            if let Err(err) = nw::tcp::server_run(server_copy).await {
+            if let Err(err) = nw::tcp::server_run(server_copy, &CONN_POOL).await {
                 tracing::error!("{:?}", err);
             }
         });

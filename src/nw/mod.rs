@@ -110,8 +110,6 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
         tracing::debug!("[{}|{:?}] has disconnected", conn.sockfd, conn.remote());
     }
 
-    fn conn_pool(&self) -> &LinearObjectPool<Conn<Self::U>>;
-
     async fn on_process(
         &self,
         conn: &Conn<Self::U>,
@@ -239,6 +237,10 @@ impl<U: Default> Conn<U> {
             rbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
             user_data: None,
         }
+    }
+
+    pub fn pool() -> LinearObjectPool<Self> {
+        LinearObjectPool::new(||Self::new(), |v|{v.reset();})
     }
 
     pub fn load_from(&mut self, stream: &TcpStream) {

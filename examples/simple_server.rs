@@ -1,7 +1,6 @@
-use std::{mem::MaybeUninit, sync::Once};
-
 use async_trait::async_trait;
 use bytes::Bytes;
+use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
 use tg::nw::pack;
 
@@ -30,20 +29,10 @@ impl tg::nw::IEvent for SimpleEvent {
         );
         assert_eq!(10000, conn.recv_seq());
     }
+}
 
-    fn conn_pool(&self) -> &LinearObjectPool<tg::nw::Conn<()>> {
-        static mut INSTANCE: MaybeUninit<LinearObjectPool<tg::nw::Conn<()>>> =
-            MaybeUninit::uninit();
-        static ONCE: Once = Once::new();
-
-        ONCE.call_once(|| unsafe {
-            INSTANCE
-                .as_mut_ptr()
-                .write(LinearObjectPool::new(|| tg::nw::Conn::new(), |v| v.reset()));
-        });
-
-        unsafe { &*INSTANCE.as_ptr() }
-    }
+lazy_static! {
+    static ref CONN_POOL: LinearObjectPool<tg::nw::Conn<()>> = tg::nw::Conn::<()>::pool();
 }
 
 #[async_trait]
@@ -54,7 +43,7 @@ async fn main() {
     let server =
         tg::nw::Server::<SimpleEvent>::new("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
 
-    if let Err(err) = tg::nw::tcp::server_run(server).await {
+    if let Err(err) = tg::nw::tcp::server_run(server, &CONN_POOL).await {
         println!("{:?}", err);
     }
 }
