@@ -39,7 +39,7 @@ pub struct UserServer {
 impl UserServer {
     fn new(host: &'static str, max_connections: usize, timeout: u64) -> Self {
         Self {
-            server: nw::Server::new(host, max_connections, timeout),
+            server: nw::Server::new_ptr(host, max_connections, timeout),
             // sessions: vec![0u32; max_connections],
         }
     }

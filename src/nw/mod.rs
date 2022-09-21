@@ -180,10 +180,14 @@ where
     T: IServerEvent,
 {
     /// 创建服务端
-    pub fn new(host: &'static str, max_connections: usize, timeout: u64) -> ServerPtr<T> {
+    pub fn new_ptr(host: &'static str, max_connections: usize, timeout: u64) -> ServerPtr<T> {
+        Ptr::parse(Self::new(host, max_connections, timeout))
+    }
+
+    pub fn new(host: &'static str, max_connections: usize, timeout: u64) -> Server<T> {
         let (shutdown, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
 
-        Ptr::parse(Self {
+        Self {
             host,
             max_connections,
             timeout,
@@ -191,7 +195,7 @@ where
             event: T::default(),
             shutdown,
             running: AtomicBool::new(false),
-        })
+        }
     }
 
     /// 监听地址
@@ -246,17 +250,7 @@ where
 {
     /// Ptr<T> 泛型的 Default 约束
     fn default() -> Self {
-        let (shutdown, _) = broadcast::channel(1);
-
-        Self {
-            host: "0.0.0.0:8080",
-            max_connections: g::DEFAULT_MAX_CONNECTIONS,
-            timeout: g::DEFAULT_READ_TIMEOUT,
-            limit_connections: Arc::new(Semaphore::new(g::DEFAULT_MAX_CONNECTIONS)),
-            event: Default::default(),
-            shutdown,
-            running: AtomicBool::new(false),
-        }
+        Self::new(g::DEFAULT_HOST, g::DEFAULT_MAX_CONNECTIONS, g::DEFAULT_READ_TIMEOUT)
     }
 }
 

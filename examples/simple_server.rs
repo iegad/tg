@@ -42,10 +42,20 @@ impl tg::nw::IServerEvent for SimpleEvent {}
 async fn main() {
     utils::init_log(tracing::Level::DEBUG);
 
-    let server =
-        tg::nw::Server::<SimpleEvent>::new("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
+    let controller =
+        tg::nw::Server::<SimpleEvent>::new_ptr("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
+    let server = controller.clone();
 
-    if let Err(err) = tg::nw::tcp::server_run(server, &CONN_POOL).await {
-        println!("{:?}", err);
+    tokio::spawn(async move {
+        if let Err(err) = tg::nw::tcp::server_run(server, &CONN_POOL).await {
+            println!("{:?}", err);
+        }
+    });
+
+    match tokio::signal::ctrl_c().await {
+        Err(err) => tracing::error!("SIGINT error: {:?}", err),
+        Ok(()) => controller.shutdown(),
     }
+
+    controller.wait().await;
 }

@@ -41,8 +41,20 @@ lazy_static! {
 async fn main() {
     utils::init_log(tracing::Level::DEBUG);
 
-    let server = tg::nw::Server::<EchoEvent>::new("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
-    if let Err(err) = tg::nw::tcp::server_run(server.clone(), &CONN_POOL).await {
-        tracing::error!("{:?}", err);
+    let controller =
+        tg::nw::Server::<EchoEvent>::new_ptr("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
+    let server = controller.clone();
+
+    tokio::spawn(async move {
+        if let Err(err) = tg::nw::tcp::server_run(server, &CONN_POOL).await {
+            println!("{:?}", err);
+        }
+    });
+
+    match tokio::signal::ctrl_c().await {
+        Err(err) => tracing::error!("SIGINT error: {:?}", err),
+        Ok(()) => controller.shutdown(),
     }
+
+    controller.wait().await;
 }
