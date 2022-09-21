@@ -372,6 +372,19 @@ impl<U: Default> Conn<U> {
     pub fn user_data(&self) -> Option<&U> {
         self.user_data.as_ref()
     }
+
+    #[inline(always)]
+    pub fn send(&self, data: Bytes) -> g::Result<()> {
+        if self.sockfd == 0 {
+            return Err(g::Err::ConnInvalid);
+        }
+
+        if let Err(err) = self.wbuf_sender.send(data) {
+            return Err(g::Err::TcpWriteFailed(format!("{:?}", err)));
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

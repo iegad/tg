@@ -90,7 +90,7 @@ pub async fn conn_handle<T>(
             }
 
             _ = shutdown_rx.recv() => {
-                tracing::debug!("[{}|{:?}] conn_loop is breaking...", conn.sockfd, conn.remote);
+                tracing::debug!("[{:05}-{:?}] conn_loop is breaking...", conn.sockfd, conn.remote);
                 break 'conn_loop;
             }
 
@@ -131,8 +131,8 @@ pub async fn conn_handle<T>(
                         };
 
                         req.reset();
-                        if let Some(rsp) = option_rsp {
-                            w_tx.send(rsp).unwrap();
+                        if let Some(rsp_bytes) = option_rsp {
+                            w_tx.send(rsp_bytes).unwrap();
                         }
                     } else {
                         if let Err(err) = pack::Package::parse(conn.rbuf_mut(), &mut req) {
