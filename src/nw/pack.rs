@@ -49,8 +49,14 @@ lazy_static! {
         LinearObjectPool::new(|| Package::new(), |v| { v.reset() });
 
     /// RSP_POOL: 应答使用 package 对象池
-    pub static ref RSP_POOL: LinearObjectPool<Package> =
-        LinearObjectPool::new(|| Package::new(), |v| { v.reset() });
+    pub static ref RSP_POOL: LinearObjectPool<BytesMut> =
+        LinearObjectPool::new(|| BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
+        |v| {
+            if v.capacity() < g::DEFAULT_BUF_SIZE {
+                v.resize(g::DEFAULT_BUF_SIZE, 0);
+            }
+            v.clear();
+        });
 }
 
 impl Package {
@@ -253,9 +259,7 @@ impl Package {
 
     /// 将Package包 序列化到一个新的 BytesMut字节缓冲区
     #[inline(always)]
-    pub fn to_bytes(&self) -> BytesMut {
-        let mut wbuf = BytesMut::with_capacity(self.raw_len);
-
+    pub fn to_bytes(&self, wbuf: &mut BytesMut) {
         wbuf.put_u16_le(self.service_id ^ Self::HEAD_16_KEY);
         wbuf.put_u16_le(self.package_id ^ Self::HEAD_16_KEY);
         wbuf.put_u32_le(self.router_id ^ Self::HEAD_32_KEY);
@@ -264,8 +268,6 @@ impl Package {
         if self.raw_len > Self::HEAD_SIZE {
             wbuf.put(&self.data[..]);
         }
-
-        wbuf
     }
 
     /// 追加数据到消息体中
@@ -354,6 +356,8 @@ impl Package {
 
 #[cfg(test)]
 mod pack_test {
+    use crate::nw::pack::RSP_POOL;
+
     use super::Package;
     use bytes::{BufMut, BytesMut};
     use type_layout::TypeLayout;
@@ -403,7 +407,8 @@ mod pack_test {
         assert_eq!(std::str::from_utf8(p2.data()).unwrap(), data);
 
         let mut iobuf = BytesMut::with_capacity(1500);
-        let buf = p1.to_bytes();
+        let mut buf = RSP_POOL.pull();
+        p1.to_bytes(&mut buf);
         iobuf.put(&buf[..]);
         let iobuf_pos = &iobuf[0] as *const u8;
         assert_eq!(iobuf.capacity(), 1500);
@@ -426,7 +431,7 @@ mod pack_test {
         assert_eq!(std::str::from_utf8(p3.data()).unwrap(), data);
 
         let mut p4 = Package::new();
-        let mut buf = p3.to_bytes();
+        p3.to_bytes(&mut buf);
         p4.from_buf(&mut buf).unwrap();
 
         assert!(p4.valid());

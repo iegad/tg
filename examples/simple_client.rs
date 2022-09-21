@@ -1,5 +1,5 @@
 use futures_util::future;
-use tg::utils;
+use tg::{nw::pack::RSP_POOL, utils};
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 
 async fn work() {
@@ -10,8 +10,9 @@ async fn work() {
     let (_, mut writer) = cli.split();
     for i in 0..10000 {
         let req = tg::nw::pack::Package::with_params(1, 1, 1, i + 1, data);
-        let mut wbuf = req.to_bytes();
-        if let Err(err) = writer.write_all_buf(&mut wbuf).await {
+        let mut wbuf = RSP_POOL.pull();
+        req.to_bytes(&mut *wbuf);
+        if let Err(err) = writer.write_all_buf(&mut *wbuf).await {
             println!("write failed: {:?}", err);
             break;
         }

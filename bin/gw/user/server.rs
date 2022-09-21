@@ -1,11 +1,16 @@
 use async_trait::async_trait;
-use bytes::Bytes;
 use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
-use std::{mem::MaybeUninit, sync::Once};
+use std::{
+    mem::MaybeUninit,
+    sync::{Arc, Once},
+};
 use tg::{
     g,
-    nw::{self, pack},
+    nw::{
+        self,
+        pack::{self, RSP_POOL},
+    },
 };
 
 lazy_static! {
@@ -23,9 +28,11 @@ impl nw::IEvent for UserEvent {
         &self,
         _conn: &tg::nw::Conn<()>,
         req: &pack::Package,
-    ) -> tg::g::Result<Option<Bytes>> {
+    ) -> tg::g::Result<Option<tg::nw::Response>> {
         // tracing::debug!("[{:?}] => {:?}", conn.remote(), req);
-        Ok(Some(req.to_bytes().freeze()))
+        let mut wbuf = RSP_POOL.pull();
+        req.to_bytes(&mut wbuf);
+        Ok(Some(Arc::new(wbuf)))
     }
 }
 

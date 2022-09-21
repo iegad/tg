@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use bytes::Bytes;
 use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
 use tg::{nw::pack, utils};
@@ -15,7 +14,7 @@ impl tg::nw::IEvent for SimpleEvent {
         &self,
         conn: &tg::nw::Conn<()>,
         req: &pack::Package,
-    ) -> tg::g::Result<Option<Bytes>> {
+    ) -> tg::g::Result<Option<tg::nw::Response>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
         Ok(None)
     }

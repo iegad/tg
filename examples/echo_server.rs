@@ -1,7 +1,8 @@
 use async_trait::async_trait;
-use bytes::Bytes;
 use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
+use pack::RSP_POOL;
+use std::sync::Arc;
 use tg::{nw::pack, utils};
 
 #[derive(Clone, Default)]
@@ -15,9 +16,11 @@ impl tg::nw::IEvent for EchoEvent {
         &self,
         conn: &tg::nw::Conn<()>,
         req: &pack::Package,
-    ) -> tg::g::Result<Option<Bytes>> {
+    ) -> tg::g::Result<Option<tg::nw::Response>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
-        Ok(Some(req.to_bytes().freeze()))
+        let mut rsp = RSP_POOL.pull();
+        req.to_bytes(&mut rsp);
+        Ok(Some(Arc::new(rsp)))
     }
 
     async fn on_disconnected(&self, conn: &tg::nw::Conn<()>) {

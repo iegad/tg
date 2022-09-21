@@ -10,8 +10,8 @@ pub mod tools;
 
 use crate::{g, us::Ptr};
 use async_trait::async_trait;
-use bytes::{Bytes, BytesMut};
-use lockfree_object_pool::LinearObjectPool;
+use bytes::BytesMut;
+use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 #[cfg(unix)]
 use std::os::unix::prelude::AsRawFd;
 #[cfg(windows)]
@@ -27,6 +27,8 @@ use tokio::{
     net::TcpStream,
     sync::{broadcast, Semaphore},
 };
+
+pub type Response = Arc<LinearReusable<'static, BytesMut>>;
 
 /// # IEvent
 ///
@@ -64,7 +66,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
         &self,
         conn: &Conn<Self::U>,
         req: &pack::Package,
-    ) -> g::Result<Option<Bytes>>;
+    ) -> g::Result<Option<Response>>;
 }
 
 /// # IServerEvent
@@ -199,15 +201,15 @@ pub struct Conn<U: Default> {
     sockfd: i32, // 类unix 平台下的原始socket
     #[cfg(windows)]
     sockfd: RawSocket, // windows 平台下的原始socket
-    idempoetnt: u32,                        // 最后幂等值
-    send_seq: u32,                          // 发送序列
-    recv_seq: u32,                          // 接收序列
-    remote: SocketAddr,                     // 远端地址
-    local: SocketAddr,                      // 本端地址
-    wbuf_sender: broadcast::Sender<Bytes>,  // 发送管道
-    shutdown_sender: broadcast::Sender<u8>, // 关闭管道
-    rbuf: BytesMut,                         // 读缓冲区
-    user_data: Option<U>,                   // 用户数据
+    idempoetnt: u32,                          // 最后幂等值
+    send_seq: u32,                            // 发送序列
+    recv_seq: u32,                            // 接收序列
+    remote: SocketAddr,                       // 远端地址
+    local: SocketAddr,                        // 本端地址
+    wbuf_sender: broadcast::Sender<Response>, // 发送管道
+    shutdown_sender: broadcast::Sender<u8>,   // 关闭管道
+    rbuf: BytesMut,                           // 读缓冲区
+    user_data: Option<U>,                     // 用户数据
 }
 
 impl<U: Default> Conn<U> {
@@ -318,12 +320,12 @@ impl<U: Default> Conn<U> {
     }
 
     #[inline(always)]
-    pub fn wbuf_receiver(&self) -> broadcast::Receiver<Bytes> {
+    pub fn wbuf_receiver(&self) -> broadcast::Receiver<Response> {
         self.wbuf_sender.subscribe()
     }
 
     #[inline(always)]
-    pub fn wbuf_sender(&self) -> broadcast::Sender<Bytes> {
+    pub fn wbuf_sender(&self) -> broadcast::Sender<Response> {
         self.wbuf_sender.clone()
     }
 
@@ -374,13 +376,15 @@ impl<U: Default> Conn<U> {
     }
 
     #[inline(always)]
-    pub fn send(&self, data: Bytes) -> g::Result<()> {
+    pub fn send(&self, data: Response) -> g::Result<()> {
         if self.sockfd == 0 {
             return Err(g::Err::ConnInvalid);
         }
 
-        if let Err(err) = self.wbuf_sender.send(data) {
-            return Err(g::Err::TcpWriteFailed(format!("{:?}", err)));
+        if let Err(_) = self.wbuf_sender.send(data) {
+            return Err(g::Err::TcpWriteFailed(
+                "wbuf_sender.send failed".to_string(),
+            ));
         }
 
         Ok(())

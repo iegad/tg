@@ -132,7 +132,9 @@ pub async fn conn_handle<T>(
 
                         req.reset();
                         if let Some(rsp_bytes) = option_rsp {
-                            w_tx.send(rsp_bytes).unwrap();
+                            if let Err(_) = w_tx.send(rsp_bytes) {
+                                tracing::error!("w_tx.send failed");
+                            }
                         }
                     } else {
                         if let Err(err) = pack::Package::parse(conn.rbuf_mut(), &mut req) {

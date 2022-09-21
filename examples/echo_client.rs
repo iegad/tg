@@ -1,6 +1,6 @@
 use bytes::BytesMut;
 use futures_util::future;
-use tg::{g, utils};
+use tg::{g, nw::pack::RSP_POOL, utils};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -13,8 +13,9 @@ async fn work() {
     let (mut reader, mut writer) = cli.split();
     for i in 0..10000 {
         let req = tg::nw::pack::Package::with_params(1, 1, 1, i + 1, data);
-        let mut wbuf = req.to_bytes();
-        if let Err(err) = writer.write_all_buf(&mut wbuf).await {
+        let mut wbuf = RSP_POOL.pull();
+        req.to_bytes(&mut wbuf);
+        if let Err(err) = writer.write_all_buf(&mut *wbuf).await {
             println!("write failed: {:?}", err);
             break;
         }
