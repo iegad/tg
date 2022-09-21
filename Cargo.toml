@@ -10,7 +10,7 @@ name = "gw"
 path = "bin/gw/main.rs"
 
 [dependencies]
-tokio = { version = "1.20.1", features = ["full"] }
+tokio = { version = "1.21.1", features = ["full"] }
 tokio-tungstenite = "0.17.2"
 chrono = "0.4.22"
 hex = "0.4.3"
