@@ -360,6 +360,8 @@ mod pack_test {
 
     #[test]
     fn test_package_info() {
+        assert_eq!(Package::HEAD_SIZE, 16);
+
         println!(
             "* --------- PACKAGE INFO BEGIN ---------\n\
         * Layout: {}\n\
