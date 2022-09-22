@@ -11,7 +11,7 @@ use std::net::{IpAddr, SocketAddr};
 /// # Example
 ///
 /// ```
-/// let (v, port) = tg::nw::sockaddr_to_bytes("0.0.0.0:6688".parse().unwrap()).unwrap();
+/// let (v, port) = tg::nw::tools::sockaddr_to_bytes("0.0.0.0:6688".parse().unwrap()).unwrap();
 /// assert_eq!(v.len(), 4);
 /// assert_eq!(port, 6688);
 /// ```
@@ -32,7 +32,7 @@ pub fn sockaddr_to_bytes(sock_addr: SocketAddr) -> g::Result<(Vec<u8>, u16)> {
 ///
 /// ```
 /// let ipv = vec![0u8; 4];
-/// let sockaddr = tg::nw::bytes_to_sockaddr(&ipv, 6688).unwrap();
+/// let sockaddr = tg::nw::tools::bytes_to_sockaddr(&ipv, 6688).unwrap();
 /// assert_eq!("0.0.0.0:6688", format!("{:?}", sockaddr));
 /// ```
 pub fn bytes_to_sockaddr(buf: &[u8], port: u16) -> g::Result<SocketAddr> {

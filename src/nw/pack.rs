@@ -2,7 +2,6 @@ use crate::g;
 use bytes::{Buf, BufMut, BytesMut};
 use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
-use std::mem::size_of;
 use type_layout::TypeLayout;
 
 lazy_static! {
@@ -15,25 +14,56 @@ lazy_static! {
     /// # REQ_POOL
     /// 
     /// you can pull one from package's pool when need a package for request.
+    ///      
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::REQ_POOL;
+    /// use tg::nw::pack::Package;
+    /// 
+    /// let data = "Hello world";
+    /// let mut req = REQ_POOL.pull();
+    /// req.set_service_id(1);
+    /// req.set_package_id(2);
+    /// req.set_data(data.as_bytes());
+    /// assert_eq!(req.service_id(), 1);
+    /// assert_eq!(req.package_id(), 2);
+    /// assert_eq!(req.raw_len(), data.len() + Package::HEAD_SIZE);
+    /// ```
     pub static ref REQ_POOL: LinearObjectPool<Package> =
         LinearObjectPool::new(|| Package::new(), |v| { v.reset() });
 
     /// # WBUF_POOL
     /// 
     /// you can pull one from BytesMut's pool when need a BytesMut for write buffer.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::WBUF_POOL;
+    /// use bytes::BufMut;
+    /// 
+    /// let mut wbuf = WBUF_POOL.pull();
+    /// wbuf.put("Hello world".as_bytes());
+    /// assert_eq!(wbuf.len(), 11);
+    /// ```
     pub static ref WBUF_POOL: LinearObjectPool<BytesMut> =
         LinearObjectPool::new(|| BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
         |v| {
             if v.capacity() < g::DEFAULT_BUF_SIZE {
                 v.resize(g::DEFAULT_BUF_SIZE, 0);
             }
-            v.clear();
+            unsafe{ v.set_len(0); }
         });
 }
 
 /// # Package 
 ///
 /// for network transport
+/// 
+/// windows: sizeof(Package) is 56
+/// 
+/// unix: sizeof(Pakcage) is TODO
 ///
 /// [Package] composit by Head and Body
 ///
@@ -41,28 +71,30 @@ lazy_static! {
 /// 
 /// Head's size is 16 Bytes.
 ///
-/// [service_id]: 16bit: match service.
+/// `service_id`: 16bit: match service.
 ///
-/// [package_id]: 16bit: match service's implement handler.
+/// `package_id`: 16bit: match service's implement handler.
 ///
-/// [router_id]:  32bit: match service's node when service has multiple nodes.
+/// `router_id`:  32bit: match service's node when service has multiple nodes.
 ///
-/// [idempotent]: 32bit: check if the package has already been processed.
+/// `idempotent`: 32bit: check if the package has already been processed.
 ///
-/// [raw_len]:    32bit: Package's length, include Head's size and Body's size.
+/// `raw_len`:    32bit: Package's length, include Head's size and Body's size.
 /// 
 /// # Memory Layout
 /// 
-/// | service_id: 2 Bytes | package_id: 2 Bytes | router_id: 4 Bytes | idempotent: 4 Bytes | raw_len: 4 Bytes | data: [[0, 1G Bytes]]
+/// | service_id: `2 Bytes` | package_id: `2 Bytes` | router_id: `4 Bytes` | idempotent: `4 Bytes` | raw_len: `4 Bytes` | data: `[0, 1G Bytes]`
 /// 
 /// # Example
 /// 
 /// ```
+/// use tg::nw::pack::Package;
+/// 
 /// let p1 = Package::new();
 /// assert_eq!(Package::HEAD_SIZE, p1.raw_len());
 /// 
-/// let data = b"Hello world";
-/// let p2 = Package::with_params(1, 2, 3, 4, data.len(), data);
+/// let data = "Hello world";
+/// let p2 = Package::with_params(1, 2, 3, 4, data.as_bytes());
 /// assert_eq!(p2.service_id(), 1);
 /// assert_eq!(p2.package_id(), 2);
 /// assert_eq!(p2.router_id(), 3);
@@ -83,23 +115,27 @@ pub struct Package {
 }
 
 impl Package {
+    /// # Package::HEAD_SIZE
+    /// 
     /// Package head's size
-    pub const HEAD_SIZE: usize = size_of::<u16>()
-        + size_of::<u16>()
-        + size_of::<u32>()
-        + size_of::<u32>()
-        + size_of::<u32>();
+    /// 
+    /// ```
+    /// assert_eq!(tg::nw::pack::Package::HEAD_SIZE, 16);
+    /// ```
+    pub const HEAD_SIZE: usize = 16;
 
-    /// 消息体最大长度: 1G
+    /// # Package::MAX_DATA_SIZE
+    /// 
+    /// Package's data max size: 1G
     pub const MAX_DATA_SIZE: usize = 1024 * 1024 * 1024;
 
-    /// 16位加密KEY, 用于消息头中16位字段的加密和解密
-    const HEAD_16_KEY: u16 = 0x0A0B;
+    /// 16bit KEY use for Package's field 2 bytes encrypt/decrypt
+    const HEAD_16_KEY: u16 = 0xFA0B;
 
-    /// 32位加密KEY, 用于消息头中32位字段的加密和解密
-    const HEAD_32_KEY: u32 = 0x0C0D0E0F;
+    /// 32bit KEY use for Package's field 4 bytes encrypt/decrypt
+    const HEAD_32_KEY: u32 = 0xFC0DFE0F;
 
-    /// # new
+    /// # Package::new
     /// 
     /// build a default Package. Package.raw_len is Package::HEAD_SIZE.
     /// 
@@ -122,7 +158,23 @@ impl Package {
         }
     }
 
-    /// # with_params:
+    /// # Package::with_params
+    /// 
+    /// build a package with fields
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::Package;
+    /// 
+    /// let p = Package::with_params(1, 2, 3, 4, "Hello world".as_bytes());
+    /// assert_eq!(p.service_id(), 1);
+    /// assert_eq!(p.package_id(), 2);
+    /// assert_eq!(p.router_id(), 3);
+    /// assert_eq!(p.idempotent(), 4);
+    /// assert_eq!(p.raw_len(), 11 + Package::HEAD_SIZE);
+    /// assert_eq!(std::str::from_utf8(p.data()).unwrap(), "Hello world");
+    /// ```
     pub fn with_params(
         service_id: u16,
         package_id: u16,
@@ -140,8 +192,39 @@ impl Package {
         }
     }
 
-    /// 通过 rbuf 缓冲区构建 pack
-    #[inline]
+    /// # Package::parse
+    /// 
+    /// deserialize pack from rbuf.
+    /// 
+    /// # Return
+    /// 
+    /// if success returns Ok(()), else returns Err(err);
+    /// 
+    /// # Notes
+    /// 
+    /// 1. If the `rbuf` is not sufficient to deserialize a complete `pack`,
+    ///    the `pack` will be in a `half-loaded` state, pack.valid() is false but pack.head_valid() is true
+    /// 
+    /// 2. when `!pack.valid() && !pack.head_valid()` must `rbuf.len()` >= [Package::HEAD_SIZE]
+    /// 
+    /// 3. when `!pack.valid() && pack.head_valid()` must `rbuf.len()` > 0
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::WBUF_POOL;
+    /// use tg::nw::pack::REQ_POOL;
+    /// use tg::nw::pack::Package;
+    /// 
+    /// let mut buf = WBUF_POOL.pull();
+    /// let p1 = Package::with_params(1, 2, 3, 4, "Hello world".as_bytes());
+    /// p1.to_bytes(&mut buf);
+    /// 
+    /// let mut p2 = REQ_POOL.pull();
+    /// assert_eq!(Package::parse(&mut *buf, &mut p2).unwrap(), ());
+    /// 
+    /// assert_eq!(format!("{:?}", p1), format!("{:?}", &*p2));
+    /// ```
     pub fn parse(rbuf: &mut BytesMut, pack: &mut Self) -> g::Result<()> {
         if pack.valid() {
             return Ok(());
@@ -149,7 +232,7 @@ impl Package {
 
         if pack.head_valid() {
             if rbuf.len() == 0 {
-                return Err(g::Err::PackDataSizeInvalid);
+                return Err(g::Err::BufSizeInvalid);
             }
 
             pack.fill_data(rbuf);
@@ -157,14 +240,38 @@ impl Package {
         }
 
         if rbuf.len() < Self::HEAD_SIZE {
-            return Err(g::Err::PackDataSizeInvalid);
+            return Err(g::Err::BufSizeInvalid);
         }
 
         pack.from_buf(rbuf)?;
         Ok(())
     }
 
-    /// 反序列化, rbuf 缓冲区中必需有一个完整的包
+    /// # Package::from_bytes
+    /// 
+    /// deserialize Package from `rbuf`
+    /// 
+    /// # Returns
+    /// 
+    /// If successful returns Ok(Package) else returns Err(err)
+    /// 
+    /// # Notes
+    /// 
+    /// `rbuf` must contains a complete package.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::Package;
+    /// use tg::nw::pack::WBUF_POOL;
+    /// 
+    /// let p1 = Package::with_params(1, 2, 3, 4, "Hello world".as_bytes());
+    /// let mut buf = WBUF_POOL.pull();
+    /// p1.to_bytes(&mut buf);
+    /// 
+    /// let p2 = Package::from_bytes(&mut buf).unwrap();
+    /// assert_eq!(format!("{:?}", p1), format!("{:?}", p2));
+    /// ```
     pub fn from_bytes(rbuf: &mut BytesMut) -> g::Result<Self> {
         if rbuf.len() < Self::HEAD_SIZE {
             return Err(g::Err::PackHeadInvalid("Head Size is invalid"));
@@ -215,7 +322,23 @@ impl Package {
         })
     }
 
-    /// 通过BytesMut 缓冲区构建当前 Package对象
+    /// # Package.from_bytes
+    /// 
+    /// deserialize package from `rbuf`
+    /// 
+    /// it's a internal method, called by [Package::parse]
+    /// 
+    /// this method will reset the package when it's complete or half-loaded.
+    /// 
+    /// # Returns
+    /// 
+    /// when rbuf contains a complete package buffer, the package will be deserialize a complete package.
+    /// 
+    /// when `rbuf.len` < Package::HEAD_SIZE returns error.
+    /// 
+    /// when `rbuf.len` >= Package::HEAD_SIZE && rbuf not contains a complete package: returns half-loaded package.
+    /// 
+    /// when rbuf's data is invalid returns error.
     fn from_buf(&mut self, rbuf: &mut BytesMut) -> g::Result<()> {
         if rbuf.len() < Self::HEAD_SIZE {
             return Err(g::Err::PackHeadInvalid("Head Size is invalid"));
@@ -263,16 +386,15 @@ impl Package {
         Ok(())
     }
 
-    /// 按需填充消息体, 当该包被加载不完全时调用.
-    ///
-    /// 当包的消息头已构建, 但是消息体不全时调用此方法.
-    ///
-    /// 如果 rbuf 缓冲区的内容大于 当前Package 消息体所需长度时, 消息体只会从rbuf 中消费掉需要的数据长度.
-    ///
-    /// 该函数不同于[append_data], 该函数是在接收包时构建Package中使用.
-    #[inline]
+    /// # Package.fill_data
+    /// 
+    /// fill the half-loaded package, let it be complete.
+    /// 
+    /// it's a internal method, called by [Package::parse].
+    /// 
+    /// call this method, package must be half-loaded state.
     fn fill_data(&mut self, rbuf: &mut BytesMut) {
-        debug_assert!(self.head_valid());
+        assert!(self.head_valid());
 
         let rbuf_len = rbuf.len();
 
@@ -285,15 +407,46 @@ impl Package {
         rbuf.advance(left_len);
     }
 
-    /// 重置 Package
+    /// # Package.reset
+    /// 
+    /// reset the package, package.valid() == false, package.head_valid() == false, package.raw_len == Package::HEAD_SIZE;
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::Package;
+    /// 
+    /// let mut p = Package::with_params(1, 2, 3, 4, "Hello world".as_bytes());
+    /// assert!(p.valid() && p.head_valid());
+    /// p.reset();
+    /// assert!(!p.valid() && !p.head_valid());
+    /// ```
     #[inline]
     pub fn reset(&mut self) {
         self.service_id = 0;
+        unsafe{ self.data.set_len(0); }
+        self.raw_len = Self::HEAD_SIZE;
     }
 
-    /// 将Package包 序列化到一个新的 BytesMut字节缓冲区
+    /// # Package.to_bytes
+    /// 
+    /// serialize package to `wbuf`
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::Package;
+    /// use bytes::BytesMut;
+    /// 
+    /// let p = Package::with_params(1, 2, 3, 4, "Hello world".as_bytes());
+    /// let mut wbuf = BytesMut::new();
+    /// p.to_bytes(&mut wbuf);
+    /// assert_eq!(wbuf.len(), Package::HEAD_SIZE + 11);
+    /// ```
     #[inline]
     pub fn to_bytes(&self, wbuf: &mut BytesMut) {
+        assert!(self.valid());
+
         wbuf.put_u16_le(self.service_id ^ Self::HEAD_16_KEY);
         wbuf.put_u16_le(self.package_id ^ Self::HEAD_16_KEY);
         wbuf.put_u32_le(self.router_id ^ Self::HEAD_32_KEY);
@@ -304,69 +457,147 @@ impl Package {
         }
     }
 
-    /// 追加数据到消息体中
+    /// # Package.append_data
+    /// 
+    /// Append data to `package.data` tail, but `package.data.len() <= Package::MAX_DATA_SIZE`.
     ///
-    /// 该函数不同于[fill_data], 该函数是在主动发包时构建Package中使用.
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::Package;
+    /// 
+    /// let mut p = Package::with_params(1, 2, 3, 4, "Hello".as_bytes());
+    /// assert_eq!(std::str::from_utf8(p.data()).unwrap(), "Hello");
+    /// assert_eq!(p.raw_len(), Package::HEAD_SIZE + 5);
+    /// 
+    /// p.append_data(" world".as_bytes());
+    /// assert_eq!(std::str::from_utf8(p.data()).unwrap(), "Hello world");
+    /// assert_eq!(p.raw_len(), Package::HEAD_SIZE + 11);
+    /// ```
     #[inline]
     pub fn append_data(&mut self, data: &[u8]) {
         self.data.extend_from_slice(data);
         self.raw_len += data.len();
 
-        debug_assert!(self.data.len() <= Self::MAX_DATA_SIZE);
+        assert!(self.data.len() <= Self::MAX_DATA_SIZE);
     }
 
-    /// 消息头是否有效
+    /// # Package.head_valid
+    /// 
+    /// check the package's head is valid.
+    /// 
+    /// # Returns
+    /// 
+    /// If package's head is valid returns true, else returns false.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::Package;
+    /// 
+    /// let mut p = Package::new();
+    /// assert!(!p.head_valid());
+    /// 
+    /// p.set_service_id(1);
+    /// p.set_package_id(2);
+    /// p.set_router_id(3);
+    /// p.set_idempotent(4);
+    /// 
+    /// assert!(p.head_valid());
+    /// ```
     #[inline]
     pub fn head_valid(&self) -> bool {
         self.service_id > 0 && self.package_id > 0 && self.router_id > 0 && self.idempotent > 0
     }
 
-    /// 包是否有效
+    /// # Package.valid
+    /// 
+    /// check the package is valid
+    /// 
+    /// # Returns
+    /// 
+    /// If package is valid returns true, else returns false.
+    /// 
+    /// # Notes
+    /// 
+    /// If `package.valid()` means package is complete.
+    /// 
+    /// If `!package.valid() && package.head_valid()` means package is half-loaded.
+    /// 
+    /// If `!package.valid() && !package.head_valid()` means package is invalid.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::Package;
+    /// 
+    /// let mut p = Package::new();
+    /// assert!(!p.head_valid());
+    /// 
+    /// p.set_service_id(1);
+    /// p.set_package_id(2);
+    /// p.set_router_id(3);
+    /// p.set_idempotent(4);
+    /// 
+    /// assert!(p.head_valid() && p.valid());
+    /// 
+    /// p.set_data("12345".as_bytes());
+    /// assert!(p.head_valid() && p.valid());
+    /// ```
     #[inline]
     pub fn valid(&self) -> bool {
         self.raw_len == Self::HEAD_SIZE + self.data.len() && self.head_valid()
     }
 
+    /// set package's service_id
     #[inline]
     pub fn set_service_id(&mut self, service_id: u16) {
         self.service_id = service_id;
     }
 
+    /// get package's service_id
     #[inline]
     pub fn service_id(&self) -> u16 {
         self.service_id
     }
 
+    /// set package's package_id
     #[inline]
     pub fn set_package_id(&mut self, package_id: u16) {
         self.package_id = package_id;
     }
 
+    /// get package's package_id
     #[inline]
     pub fn package_id(&self) -> u16 {
         self.package_id
     }
 
+    /// set package's router_id
     #[inline]
     pub fn set_router_id(&mut self, router_id: u32) {
         self.router_id = router_id;
     }
 
+    /// get package's router_id
     #[inline]
     pub fn router_id(&self) -> u32 {
         self.router_id
     }
 
+    /// set package's idempotent
     #[inline]
     pub fn set_idempotent(&mut self, idempotent: u32) {
         self.idempotent = idempotent;
     }
 
+    /// get package's idempotent
     #[inline]
     pub fn idempotent(&self) -> u32 {
         self.idempotent
     }
 
+    /// set package's data
     #[inline]
     pub fn set_data(&mut self, data: &[u8]) {
         assert!(data.len() <= Self::MAX_DATA_SIZE);
@@ -377,11 +608,13 @@ impl Package {
         self.raw_len = Self::HEAD_SIZE + data.len();
     }
 
+    /// get package's idempotent
     #[inline]
     pub fn data(&self) -> &[u8] {
         &self.data[..self.raw_len - Self::HEAD_SIZE]
     }
 
+    /// set package's raw length, `raw_len == Package::HEAD_SIZE + package.data.len()`.
     #[inline]
     pub fn raw_len(&self) -> usize {
         self.raw_len
@@ -475,5 +708,9 @@ mod pack_test {
         assert_eq!(p4.data().len(), 11);
         assert_eq!(p4.raw_len(), 27);
         assert_eq!(std::str::from_utf8(p4.data()).unwrap(), data);
+
+        let mut p5 = Package::new();
+        p4.to_bytes(&mut buf);
+        assert_eq!(Package::parse(&mut buf, &mut p5).unwrap(), ());
     }
 }
