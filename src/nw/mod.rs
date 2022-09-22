@@ -133,37 +133,37 @@ where
     }
 
     /// 监听地址
-    #[inline(always)]
+    #[inline]
     pub fn host(&self) -> &'static str {
         self.host
     }
 
     /// 最大连接数
-    #[inline(always)]
+    #[inline]
     pub fn max_connections(&self) -> usize {
         self.max_connections
     }
 
     /// 当前连接数
-    #[inline(always)]
+    #[inline]
     pub fn current_connections(&self) -> usize {
         self.max_connections - self.limit_connections.available_permits()
     }
 
     /// 客户端读超时
-    #[inline(always)]
+    #[inline]
     pub fn timeout(&self) -> u64 {
         self.timeout
     }
 
     /// 运行状态
-    #[inline(always)]
+    #[inline]
     pub fn running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
 
     /// 关闭服务
-    #[inline(always)]
+    #[inline]
     pub fn shutdown(&self) {
         assert!(self.running());
         if let Err(err) = self.shutdown.send(1) {
@@ -276,7 +276,7 @@ impl<U: Default> Conn<U> {
     }
 
     /// 重置 Conn<U>, 使用无效
-    #[inline(always)]
+    #[inline]
     fn reset(&mut self) {
         self.sockfd = 0;
         self.idempoetnt = 0;
@@ -288,7 +288,7 @@ impl<U: Default> Conn<U> {
     /// 检测读缓冲区.
     ///
     /// 随着连接端不断的读到消息, 读缓冲区的会越来越小, 所以读缓冲区一旦小于 消息头大小时需要重新分配读缓冲区空间
-    #[inline(always)]
+    #[inline]
     fn check_rbuf(&mut self) {
         let n = self.rbuf.len();
         if n < pack::Package::HEAD_SIZE {
@@ -297,85 +297,85 @@ impl<U: Default> Conn<U> {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     #[cfg(unix)]
     pub fn sockfd(&self) -> i32 {
         self.sockfd
     }
 
-    #[inline(always)]
+    #[inline]
     #[cfg(windows)]
     pub fn sockfd(&self) -> RawSocket {
         self.sockfd
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn remote(&self) -> &SocketAddr {
         &self.remote
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn local(&self) -> &SocketAddr {
         &self.local
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn wbuf_receiver(&self) -> broadcast::Receiver<Response> {
         self.wbuf_sender.subscribe()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn wbuf_sender(&self) -> broadcast::Sender<Response> {
         self.wbuf_sender.clone()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn shutdown_sender(&self) -> broadcast::Sender<u8> {
         self.shutdown_sender.clone()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn shutdown_receiver(&self) -> broadcast::Receiver<u8> {
         self.shutdown_sender.subscribe()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn shutdown(&self) {
         debug_assert!(self.sockfd > 0);
         self.shutdown_sender.send(1).unwrap();
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn rbuf_mut(&mut self) -> &mut BytesMut {
         &mut self.rbuf
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn rbuf(&self) -> &BytesMut {
         &self.rbuf
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn recv_seq(&self) -> u32 {
         self.recv_seq
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn send_seq(&self) -> u32 {
         self.send_seq
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn set_user_data(&mut self, user_data: U) {
         self.user_data = Some(user_data)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn user_data(&self) -> Option<&U> {
         self.user_data.as_ref()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn send(&self, data: Response) -> g::Result<()> {
         if self.sockfd == 0 {
             return Err(g::Err::ConnInvalid);

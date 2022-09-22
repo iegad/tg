@@ -9,7 +9,7 @@ use tg::{
     g,
     nw::{
         self,
-        pack::{self, RSP_POOL},
+        pack::{self, WBUF_POOL},
     },
 };
 
@@ -30,7 +30,7 @@ impl nw::IEvent for UserEvent {
         req: &pack::Package,
     ) -> tg::g::Result<Option<tg::nw::Response>> {
         // tracing::debug!("[{:?}] => {:?}", conn.remote(), req);
-        let mut wbuf = RSP_POOL.pull();
+        let mut wbuf = WBUF_POOL.pull();
         req.to_bytes(&mut wbuf);
         Ok(Some(Arc::new(wbuf)))
     }

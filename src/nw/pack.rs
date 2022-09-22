@@ -1,9 +1,3 @@
-/// -----------------------------------
-/// Package 消息包
-/// author: iegad
-/// time:   2022-09-20
-/// update_timeline:
-/// | ---- time ---- | ---- editor ---- | ------------------- content -------------------
 use crate::g;
 use bytes::{Buf, BufMut, BytesMut};
 use lazy_static::lazy_static;
@@ -11,45 +5,23 @@ use lockfree_object_pool::LinearObjectPool;
 use std::mem::size_of;
 use type_layout::TypeLayout;
 
-/// # Package 消息包
-///
-/// 用于分布式网络通信
-///
-/// 消息包由消息头与消息体组成
-///
-/// ## 消息头包含以下五个字段:
-///
-/// [service_id]: 16位: 服务ID, 确定所调用的服务
-///
-/// [package_id]: 16位: 消息ID, 确定所调用服务的业务句柄
-///
-/// [router_id]:  32位: 路由ID, 确定所调用服务的节点
-///
-/// [idempotent]: 32位: 幂等
-///
-/// [raw_len]:    32位: 消息长度, 包括消息头16字节与消息体长度
-#[derive(TypeLayout, Debug)]
-#[repr(C)]
-pub struct Package {
-    service_id: u16, // 服务ID
-    package_id: u16, // 包ID
-    router_id: u32,  // 路由ID
-    idempotent: u32, // 幂等
-    raw_len: usize,  // 包长
-    data: BytesMut,  // 消息体
-}
-
 lazy_static! {
-    /// PACK_POOL: 框架内部使用 package 对象池
+    /// # PACK_POOL 
+    /// 
+    /// for internal to use
     pub(crate) static ref PACK_POOL: LinearObjectPool<Package> =
         LinearObjectPool::new(|| Package::new(), |v| { v.reset() });
 
-    /// REQ_POOL: 请求使用 package 对象池
+    /// # REQ_POOL
+    /// 
+    /// you can pull one from package's pool when need a package for request.
     pub static ref REQ_POOL: LinearObjectPool<Package> =
         LinearObjectPool::new(|| Package::new(), |v| { v.reset() });
 
-    /// RSP_POOL: 应答使用 package 对象池
-    pub static ref RSP_POOL: LinearObjectPool<BytesMut> =
+    /// # WBUF_POOL
+    /// 
+    /// you can pull one from BytesMut's pool when need a BytesMut for write buffer.
+    pub static ref WBUF_POOL: LinearObjectPool<BytesMut> =
         LinearObjectPool::new(|| BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
         |v| {
             if v.capacity() < g::DEFAULT_BUF_SIZE {
@@ -59,8 +31,59 @@ lazy_static! {
         });
 }
 
+/// # Package 
+///
+/// for network transport
+///
+/// [Package] composit by Head and Body
+///
+/// # Head:
+/// 
+/// Head's size is 16 Bytes.
+///
+/// [service_id]: 16bit: match service.
+///
+/// [package_id]: 16bit: match service's implement handler.
+///
+/// [router_id]:  32bit: match service's node when service has multiple nodes.
+///
+/// [idempotent]: 32bit: check if the package has already been processed.
+///
+/// [raw_len]:    32bit: Package's length, include Head's size and Body's size.
+/// 
+/// # Memory Layout
+/// 
+/// | service_id: 2 Bytes | package_id: 2 Bytes | router_id: 4 Bytes | idempotent: 4 Bytes | raw_len: 4 Bytes | data: [[0, 1G Bytes]]
+/// 
+/// # Example
+/// 
+/// ```
+/// let p1 = Package::new();
+/// assert_eq!(Package::HEAD_SIZE, p1.raw_len());
+/// 
+/// let data = b"Hello world";
+/// let p2 = Package::with_params(1, 2, 3, 4, data.len(), data);
+/// assert_eq!(p2.service_id(), 1);
+/// assert_eq!(p2.package_id(), 2);
+/// assert_eq!(p2.router_id(), 3);
+/// assert_eq!(p2.idempotent(), 4);
+/// assert_eq!(p2.raw_len(), Package::HEAD_SIZE + data.len());
+/// ```
+/// 
+/// # updates history
+#[derive(TypeLayout, Debug)]
+#[repr(C)]
+pub struct Package {
+    service_id: u16, 
+    package_id: u16, 
+    router_id: u32,  
+    idempotent: u32, 
+    raw_len: usize,  
+    data: BytesMut,  
+}
+
 impl Package {
-    /// 消息头长度
+    /// Package head's size
     pub const HEAD_SIZE: usize = size_of::<u16>()
         + size_of::<u16>()
         + size_of::<u32>()
@@ -76,7 +99,18 @@ impl Package {
     /// 32位加密KEY, 用于消息头中32位字段的加密和解密
     const HEAD_32_KEY: u32 = 0x0C0D0E0F;
 
-    /// 创建空包Package, 空包长度为 Package::HEAD_SIZE
+    /// # new
+    /// 
+    /// build a default Package. Package.raw_len is Package::HEAD_SIZE.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::Package;
+    /// 
+    /// let p = Package::new();
+    /// assert_eq!(p.raw_len(), Package::HEAD_SIZE);
+    /// ```
     pub fn new() -> Self {
         Self {
             service_id: 0,
@@ -88,7 +122,7 @@ impl Package {
         }
     }
 
-    /// 通过入参创建 Package
+    /// # with_params:
     pub fn with_params(
         service_id: u16,
         package_id: u16,
@@ -107,7 +141,7 @@ impl Package {
     }
 
     /// 通过 rbuf 缓冲区构建 pack
-    #[inline(always)]
+    #[inline]
     pub fn parse(rbuf: &mut BytesMut, pack: &mut Self) -> g::Result<()> {
         if pack.valid() {
             return Ok(());
@@ -236,7 +270,7 @@ impl Package {
     /// 如果 rbuf 缓冲区的内容大于 当前Package 消息体所需长度时, 消息体只会从rbuf 中消费掉需要的数据长度.
     ///
     /// 该函数不同于[append_data], 该函数是在接收包时构建Package中使用.
-    #[inline(always)]
+    #[inline]
     fn fill_data(&mut self, rbuf: &mut BytesMut) {
         debug_assert!(self.head_valid());
 
@@ -252,13 +286,13 @@ impl Package {
     }
 
     /// 重置 Package
-    #[inline(always)]
+    #[inline]
     pub fn reset(&mut self) {
         self.service_id = 0;
     }
 
     /// 将Package包 序列化到一个新的 BytesMut字节缓冲区
-    #[inline(always)]
+    #[inline]
     pub fn to_bytes(&self, wbuf: &mut BytesMut) {
         wbuf.put_u16_le(self.service_id ^ Self::HEAD_16_KEY);
         wbuf.put_u16_le(self.package_id ^ Self::HEAD_16_KEY);
@@ -273,7 +307,7 @@ impl Package {
     /// 追加数据到消息体中
     ///
     /// 该函数不同于[fill_data], 该函数是在主动发包时构建Package中使用.
-    #[inline(always)]
+    #[inline]
     pub fn append_data(&mut self, data: &[u8]) {
         self.data.extend_from_slice(data);
         self.raw_len += data.len();
@@ -282,58 +316,58 @@ impl Package {
     }
 
     /// 消息头是否有效
-    #[inline(always)]
+    #[inline]
     pub fn head_valid(&self) -> bool {
         self.service_id > 0 && self.package_id > 0 && self.router_id > 0 && self.idempotent > 0
     }
 
     /// 包是否有效
-    #[inline(always)]
+    #[inline]
     pub fn valid(&self) -> bool {
         self.raw_len == Self::HEAD_SIZE + self.data.len() && self.head_valid()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn set_service_id(&mut self, service_id: u16) {
         self.service_id = service_id;
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn service_id(&self) -> u16 {
         self.service_id
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn set_package_id(&mut self, package_id: u16) {
         self.package_id = package_id;
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn package_id(&self) -> u16 {
         self.package_id
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn set_router_id(&mut self, router_id: u32) {
         self.router_id = router_id;
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn router_id(&self) -> u32 {
         self.router_id
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn set_idempotent(&mut self, idempotent: u32) {
         self.idempotent = idempotent;
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn idempotent(&self) -> u32 {
         self.idempotent
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn set_data(&mut self, data: &[u8]) {
         assert!(data.len() <= Self::MAX_DATA_SIZE);
 
@@ -343,12 +377,12 @@ impl Package {
         self.raw_len = Self::HEAD_SIZE + data.len();
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn data(&self) -> &[u8] {
         &self.data[..self.raw_len - Self::HEAD_SIZE]
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn raw_len(&self) -> usize {
         self.raw_len
     }
@@ -356,7 +390,7 @@ impl Package {
 
 #[cfg(test)]
 mod pack_test {
-    use crate::nw::pack::RSP_POOL;
+    use crate::nw::pack::WBUF_POOL;
 
     use super::Package;
     use bytes::{BufMut, BytesMut};
@@ -407,7 +441,7 @@ mod pack_test {
         assert_eq!(std::str::from_utf8(p2.data()).unwrap(), data);
 
         let mut iobuf = BytesMut::with_capacity(1500);
-        let mut buf = RSP_POOL.pull();
+        let mut buf = WBUF_POOL.pull();
         p1.to_bytes(&mut buf);
         iobuf.put(&buf[..]);
         let iobuf_pos = &iobuf[0] as *const u8;

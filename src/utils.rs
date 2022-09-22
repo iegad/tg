@@ -19,7 +19,7 @@ pub fn get_pwd() -> g::Result<String> {
     Ok(result)
 }
 
-#[inline(always)]
+#[inline]
 pub fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -27,7 +27,7 @@ pub fn now_unix() -> u64 {
         .as_secs()
 }
 
-#[inline(always)]
+#[inline]
 pub fn now_unix_nanos() -> u128 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -35,7 +35,7 @@ pub fn now_unix_nanos() -> u128 {
         .as_nanos()
 }
 
-#[inline(always)]
+#[inline]
 pub fn now_unix_mills() -> u128 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -43,7 +43,7 @@ pub fn now_unix_mills() -> u128 {
         .as_millis()
 }
 
-#[inline(always)]
+#[inline]
 pub fn now_unix_micros() -> u128 {
     SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -51,12 +51,12 @@ pub fn now_unix_micros() -> u128 {
         .as_micros()
 }
 
-#[inline(always)]
+#[inline]
 pub fn bytes_to_hex(data: &[u8]) -> String {
     hex::encode(data)
 }
 
-#[inline(always)]
+#[inline]
 pub fn hex_to_bytes(data: &str) -> g::Result<Vec<u8>> {
     match hex::decode(data) {
         Err(_) => Err(g::Err::UtilsHexStr),

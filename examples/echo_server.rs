@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use lazy_static::lazy_static;
 use lockfree_object_pool::LinearObjectPool;
-use pack::RSP_POOL;
+use pack::WBUF_POOL;
 use std::sync::Arc;
 use tg::{nw::pack, utils};
 
@@ -18,7 +18,7 @@ impl tg::nw::IEvent for EchoEvent {
         req: &pack::Package,
     ) -> tg::g::Result<Option<tg::nw::Response>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
-        let mut rsp = RSP_POOL.pull();
+        let mut rsp = WBUF_POOL.pull();
         req.to_bytes(&mut rsp);
         Ok(Some(Arc::new(rsp)))
     }
