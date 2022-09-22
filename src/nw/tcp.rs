@@ -9,6 +9,15 @@ use tokio::{
     sync::broadcast,
 };
 
+/// # server_run<T>
+///
+/// run a tcp server.
+///
+/// # Parameters
+///
+/// `server` Arc<ServerPtr<T>> instance.
+///
+/// `conn_pool` Conn<T::U> object pool.
 pub async fn server_run<T>(
     server: Arc<Ptr<Server<T>>>,
     conn_pool: &'static LinearObjectPool<super::Conn<T::U>>,
@@ -17,32 +26,40 @@ where
     T: IServerEvent,
     T::U: Default + Sync + Send,
 {
+    // step 1: init tcp listener.
     let lfd = TcpSocket::new_v4()?;
 
     #[cfg(unix)]
     lfd.set_reuseport(true)?;
     lfd.set_reuseaddr(true)?;
     lfd.bind(server.host().parse().unwrap())?;
-
     let listener = lfd.listen(1024)?;
-    let notify_shutdown = server.shutdown.clone();
-    let mut shutdown = server.shutdown.subscribe();
 
-    server.event.on_runing(server.clone()).await;
+    // step 2: get shutdown sender and receiver
+    let shutdown_tx = server.shutdown.clone();
+    let mut shutdown_rx = server.shutdown.subscribe();
+
+    // step 3: trigge server running event.
+    server.event.on_running(server.clone()).await;
+
+    // step 4: set server state running(true).
     server.running.store(true, Ordering::SeqCst);
 
+    // step 5: accept_loop.
     'accept_loop: loop {
         select! {
-            _ = shutdown.recv() => {
+            // when recv shutdown signal.
+            _ = shutdown_rx.recv() => {
                 tracing::debug!("accept_loop is breaking...");
                 break 'accept_loop;
             }
 
+            // when connection comming.
             result_accept = listener.accept() => {
                 let (stream, _) =  result_accept?;
                 let permit = server.limit_connections.clone().acquire_owned().await.unwrap();
                 let event = server.event.clone();
-                let shutdown = notify_shutdown.subscribe();
+                let shutdown = shutdown_tx.subscribe();
                 let timeout = server.timeout;
                 tokio::spawn(async move {
                     conn_handle(stream, conn_pool, timeout, shutdown, event, permit).await;
@@ -51,54 +68,92 @@ where
         }
     }
 
+    // step 6: set server state running(false).
     server.get_mut().running.store(false, Ordering::SeqCst);
+
+    // step 7: trigger server stopped event.
     server.event.on_stopped(server.clone()).await;
 
     Ok(())
 }
 
+/// # conn_handle<T>
+///
+/// tcp connection's handler.
+///
+/// # Parameters
+///
+/// `stream` [TcpStream]
+///
+/// `conn_pool` lockfree object pool.
+///
+/// `timeout` read timeout
+///
+/// `shutdown_rx` server shutdown signal receiver.
+///
+/// `event` IEvent implement.
+///
+/// `permit` Limit Semaphore.
 pub async fn conn_handle<T>(
     mut stream: TcpStream,
     conn_pool: &'static LinearObjectPool<super::Conn<T::U>>,
     timeout: u64,
-    mut shutdown: broadcast::Receiver<u8>,
+    mut shutdown_rx: broadcast::Receiver<u8>,
     event: T,
     permit: tokio::sync::OwnedSemaphorePermit,
 ) where
     T: IEvent,
 {
+    // step 1: get a default Conn<U>.
     let mut conn = conn_pool.pull();
-    conn.load_from(&stream);
 
+    // step 2: active Conn<U>.
+    conn.acitve(&stream);
+
+    // step 3: get socket reader and writer
     let (mut reader, mut writer) = stream.split();
+
+    // step 4: get write channel receiver and sender.
     let w_tx = conn.wbuf_sender();
     let mut w_rx = conn.wbuf_receiver();
-    let mut shutdown_rx = conn.shutdown_receiver();
+
+    // step 5: get conn shutdown channel receiver.
+    let mut conn_shutdown_rx = conn.shutdown_receiver();
+
+    // step 6: timeout ticker.
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(timeout));
+
+    // step 7: get request instance.
     let mut req = pack::PACK_POOL.pull();
 
+    // step 8: triger connected event.
     if let Err(_) = event.on_connected(&conn).await {
         return;
     }
 
+    // step 9: conn_loop.
     'conn_loop: loop {
         ticker.reset();
 
         select! {
-            _ = shutdown.recv() => {
+            // server shutdown signal
+            _ = shutdown_rx.recv() => {
                 conn.shutdown();
             }
 
-            _ = shutdown_rx.recv() => {
+            // connection shutdown signal
+            _ = conn_shutdown_rx.recv() => {
                 tracing::debug!("[{:05}-{:?}] conn_loop is breaking...", conn.sockfd, conn.remote);
                 break 'conn_loop;
             }
 
+            // timeout ticker
             _ = ticker.tick() => {
                 event.on_error(&conn, g::Err::TcpReadTimeout).await;
                 break 'conn_loop;
             }
 
+            // get response from write channel to write to remote.
             result_wbuf = w_rx.recv() => {
                 let wbuf = match result_wbuf {
                     Err(err) => panic!("wch recv failed: {:?}", err),
@@ -112,6 +167,7 @@ pub async fn conn_handle<T>(
                 conn.send_seq += 1;
             }
 
+            // connection read data.
             result_read = reader.read_buf(conn.rbuf_mut()) => {
                 match result_read {
                     Err(err) => {
@@ -153,6 +209,9 @@ pub async fn conn_handle<T>(
         }
     }
 
+    // step 10: returns connections permit.
     drop(permit);
+
+    // step 11: trigger disconnected event.
     event.on_disconnected(&conn).await;
 }
