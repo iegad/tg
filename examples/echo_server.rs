@@ -14,7 +14,7 @@ impl tg::nw::IEvent for EchoEvent {
 
     async fn on_process(
         &self,
-        conn: &tg::nw::Conn<()>,
+        conn: &tg::nw::ConnPtr<()>,
         req: &pack::Package,
     ) -> tg::g::Result<Option<tg::nw::Response>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
@@ -23,7 +23,7 @@ impl tg::nw::IEvent for EchoEvent {
         Ok(Some(Arc::new(rsp)))
     }
 
-    async fn on_disconnected(&self, conn: &tg::nw::Conn<()>) {
+    async fn on_disconnected(&self, conn: &tg::nw::ConnPtr<()>) {
         tracing::debug!(
             "[{}|{:?}] has disconnected: {}",
             conn.sockfd(),

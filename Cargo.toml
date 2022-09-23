@@ -33,3 +33,4 @@ tracing = "0.1.36"
 tracing-subscriber = { version = "0.3.15", features = ["env-filter","time","local-time"] }
 time = { version = "0.3", features = ["macros"] }
 axum = "0.5.16"
+serde = { version = "1.0.145", features = ["derive"] }

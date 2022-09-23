@@ -43,7 +43,7 @@ where
             return Err(g::Err::SocketErr(format!("{:?}", err)));
         }
     }
-    
+
     if let Err(err) = lfd.set_reuseaddr(true) {
         return Err(g::Err::SocketErr(format!("{:?}", err)));
     }
@@ -66,7 +66,6 @@ where
 
     // step 5: accept_loop.
     'accept_loop: loop {
-
         let event = server.event.clone();
         let shutdown = shutdown_tx.subscribe();
         let timeout = server.timeout;
@@ -113,7 +112,7 @@ where
 ///
 /// `stream` [TcpStream]
 ///
-/// `conn` [LinearReusable<'static, super::Conn<T::U>>]
+/// `conn_resuable` [LinearReusable<'static, super::Conn<T::U>>]
 ///
 /// `timeout` read timeout
 ///
@@ -123,15 +122,16 @@ where
 ///
 pub async fn conn_handle<T>(
     mut stream: TcpStream,
-    mut conn: LinearReusable<'static, super::Conn<T::U>>,
+    mut conn_lr: LinearReusable<'static, super::Conn<T::U>>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
-    event: T
+    event: T,
 ) where
     T: IEvent,
 {
     // step 1: active Conn<U>.
-    let (w_tx, mut w_rx, mut conn_shutdown_rx) = conn.acitve(&stream);
+    let (w_tx, mut w_rx, mut conn_shutdown_rx) = conn_lr.acitve(&stream);
+    let conn = Arc::new(conn_lr);
 
     // step 2: get socket reader and writer
     let (mut reader, mut writer) = stream.split();
@@ -180,7 +180,7 @@ pub async fn conn_handle<T>(
                     event.on_error(&conn, g::Err::TcpWriteFailed(format!("{:?}", err))).await;
                     break;
                 }
-                conn.send_seq += 1;
+                conn.send_seq_incre();
             }
 
             // connection read data.
@@ -196,7 +196,7 @@ pub async fn conn_handle<T>(
 
                 loop {
                     if req.valid() {
-                        conn.recv_seq += 1;
+                        conn.recv_seq_incre();
                         let option_rsp = match event.on_process(&conn, &req).await {
                             Err(_) => break 'conn_loop,
                             Ok(v) => v,

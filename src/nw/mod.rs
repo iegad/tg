@@ -27,6 +27,9 @@ use tokio::{
 /// network's event process reply to connection data
 pub type Response = Arc<LinearReusable<'static, BytesMut>>;
 
+/// # ConnPtr<T>
+pub type ConnPtr<T> = Arc<LinearReusable<'static, Conn<T>>>;
+
 /// # IEvent
 ///
 /// common network events
@@ -63,12 +66,12 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     /// # Trigger
     ///
     /// after connection error.
-    async fn on_error(&self, conn: &Conn<Self::U>, err: g::Err) {
-        tracing::error!("[{}|{:?}] => {:?}", conn.sockfd, conn.remote(), err);
+    async fn on_error(&self, conn: &ConnPtr<Self::U>, err: g::Err) {
+        tracing::error!("[{}|{:?}] => {:?}", conn.sockfd, conn.remote, err);
     }
 
-    async fn on_connected(&self, conn: &Conn<Self::U>) -> g::Result<()> {
-        tracing::debug!("[{}|{:?}] has connected", conn.sockfd, conn.remote());
+    async fn on_connected(&self, conn: &ConnPtr<Self::U>) -> g::Result<()> {
+        tracing::debug!("[{}|{:?}] has connected", conn.sockfd, conn.remote);
         Ok(())
     }
 
@@ -77,8 +80,8 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     /// # Trigger
     ///
     /// after connection has disconnected.
-    async fn on_disconnected(&self, conn: &Conn<Self::U>) {
-        tracing::debug!("[{}|{:?}] has disconnected", conn.sockfd, conn.remote());
+    async fn on_disconnected(&self, conn: &ConnPtr<Self::U>) {
+        tracing::debug!("[{}|{:?}] has disconnected", conn.sockfd, conn.remote);
     }
 
     /// connection's has package received needs to be process.
@@ -88,7 +91,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     /// after connection receive a complete package.
     async fn on_process(
         &self,
-        conn: &Conn<Self::U>,
+        conn: &ConnPtr<Self::U>,
         req: &pack::Package,
     ) -> g::Result<Option<Response>>;
 }
@@ -372,7 +375,14 @@ impl<U: Default + Send + Sync> Conn<U> {
     }
 
     /// Conn active by TcpStream
-    fn acitve(&mut self, stream: &TcpStream) -> (broadcast::Sender<Response>, broadcast::Receiver<Response>, broadcast::Receiver<u8>) {
+    fn acitve(
+        &mut self,
+        stream: &TcpStream,
+    ) -> (
+        broadcast::Sender<Response>,
+        broadcast::Receiver<Response>,
+        broadcast::Receiver<u8>,
+    ) {
         stream.set_nodelay(true).unwrap();
 
         #[cfg(unix)]
@@ -388,7 +398,11 @@ impl<U: Default + Send + Sync> Conn<U> {
         self.remote = stream.peer_addr().unwrap();
         self.local = stream.local_addr().unwrap();
 
-        (self.wbuf_sender.clone(), self.wbuf_sender.subscribe(), self.shutdown_sender.subscribe())
+        (
+            self.wbuf_sender.clone(),
+            self.wbuf_sender.subscribe(),
+            self.shutdown_sender.subscribe(),
+        )
     }
 
     /// reset Conn<U>
@@ -411,11 +425,14 @@ impl<U: Default + Send + Sync> Conn<U> {
     ///
     /// for internal to use.
     #[inline]
-    fn check_rbuf(&mut self) {
+    fn check_rbuf(&self) {
         let n = self.rbuf.len();
         if n < pack::Package::HEAD_SIZE {
-            self.rbuf.resize(g::DEFAULT_BUF_SIZE, 0);
-            unsafe { self.rbuf.set_len(n) };
+            unsafe {
+                let rbuf = &mut *(&self.rbuf as *const BytesMut as *mut BytesMut);
+                rbuf.resize(g::DEFAULT_BUF_SIZE, 0);
+                rbuf.set_len(n)
+            };
         }
     }
 
@@ -454,8 +471,8 @@ impl<U: Default + Send + Sync> Conn<U> {
 
     /// get connection's read buffer as mutable.
     #[inline]
-    fn rbuf_mut(&mut self) -> &mut BytesMut {
-        &mut self.rbuf
+    fn rbuf_mut(&self) -> &mut BytesMut {
+        unsafe { &mut *(&self.rbuf as *const BytesMut as *mut BytesMut) }
     }
 
     /// get recv seqenece.
@@ -464,10 +481,26 @@ impl<U: Default + Send + Sync> Conn<U> {
         self.recv_seq
     }
 
+    #[inline]
+    pub fn recv_seq_incre(&self) {
+        unsafe {
+            let p = &self.recv_seq as *const u32 as *mut u32;
+            *p += 1;
+        }
+    }
+
     /// get send seqenece.
     #[inline]
     pub fn send_seq(&self) -> u32 {
         self.send_seq
+    }
+
+    #[inline]
+    pub fn send_seq_incre(&self) {
+        unsafe {
+            let p = &self.send_seq as *const u32 as *mut u32;
+            *p += 1;
+        }
     }
 
     /// set user data
