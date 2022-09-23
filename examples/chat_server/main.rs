@@ -33,7 +33,7 @@ async fn main() {
     let app = Router::new()
         .route("/start", routing::get(start))
         .route("/stop", routing::get(stop));
-    axum::Server::bind(&("0.0.0.0:80".parse().unwrap()))
+    axum::Server::bind(&("0.0.0.0:8088".parse().unwrap()))
         .serve(app.into_make_service())
         .await
         .unwrap();
@@ -44,10 +44,11 @@ async fn start() -> &'static str {
         return "server is already running."
     }
 
-    if let Err(err) = tg::nw::tcp::server_run(SERVER.clone(), &CONN_POOL).await {
-        tracing::error!("{:?}", err);
-        return "server internal error.";
-    }
+    tokio::spawn(async move {
+        if let Err(err) = tg::nw::tcp::server_run(SERVER.clone(), &CONN_POOL).await {
+            tracing::error!("{:?}", err);
+        }
+    });
 
     "OK"
 }
