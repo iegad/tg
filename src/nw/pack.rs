@@ -609,7 +609,7 @@ impl Package {
         self.raw_len = Self::HEAD_SIZE + data.len();
     }
 
-    /// get package's idempotent
+    /// get package's data
     #[inline]
     pub fn data(&self) -> &[u8] {
         &self.data[..self.raw_len - Self::HEAD_SIZE]

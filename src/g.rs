@@ -60,6 +60,12 @@ pub enum Err {
     /// 无效的连接端
     ConnInvalid,
 
+    /// Socket 通用错误
+    SocketErr(String),
+
+    /// 服务已开始运行
+    ServerIsAlreadyRunning,
+
     // ---------------------------------------------- tcp 错误定义 ----------------------------------------------
     //
     //
@@ -81,6 +87,9 @@ pub enum Err {
     /// };
     /// ```
     TcpSocketAddrInvalid(String),
+
+    /// tcp server accept 错误
+    ServerAcceptError(String),
 
     /// TcpStream::peer_addr() 调用失败
     TcpGetRemoteAddrFailed,

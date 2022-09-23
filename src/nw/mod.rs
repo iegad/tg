@@ -372,7 +372,7 @@ impl<U: Default + Send + Sync> Conn<U> {
     }
 
     /// Conn active by TcpStream
-    fn acitve(&mut self, stream: &TcpStream) {
+    fn acitve(&mut self, stream: &TcpStream) -> (broadcast::Sender<Response>, broadcast::Receiver<Response>, broadcast::Receiver<u8>) {
         stream.set_nodelay(true).unwrap();
 
         #[cfg(unix)]
@@ -387,6 +387,8 @@ impl<U: Default + Send + Sync> Conn<U> {
 
         self.remote = stream.peer_addr().unwrap();
         self.local = stream.local_addr().unwrap();
+
+        (self.wbuf_sender.clone(), self.wbuf_sender.subscribe(), self.shutdown_sender.subscribe())
     }
 
     /// reset Conn<U>
@@ -441,24 +443,6 @@ impl<U: Default + Send + Sync> Conn<U> {
     #[inline]
     pub fn local(&self) -> &SocketAddr {
         &self.local
-    }
-
-    /// get a receiver of write channel
-    #[inline]
-    pub fn wbuf_receiver(&self) -> broadcast::Receiver<Response> {
-        self.wbuf_sender.subscribe()
-    }
-
-    /// get a sender of write channel
-    #[inline]
-    pub fn wbuf_sender(&self) -> broadcast::Sender<Response> {
-        self.wbuf_sender.clone()
-    }
-
-    /// get a sender of shutdown channel
-    #[inline]
-    fn shutdown_receiver(&self) -> broadcast::Receiver<u8> {
-        self.shutdown_sender.subscribe()
     }
 
     /// close the Conn<U>'s conenction

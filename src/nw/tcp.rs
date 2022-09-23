@@ -1,9 +1,9 @@
 use super::{pack, IEvent, IServerEvent, Server};
 use crate::{g, us::Ptr};
-use lockfree_object_pool::LinearObjectPool;
+use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 use std::sync::{atomic::Ordering, Arc};
 use tokio::{
-    io::{self, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
     select,
     sync::broadcast,
@@ -21,32 +21,57 @@ use tokio::{
 pub async fn server_run<T>(
     server: Arc<Ptr<Server<T>>>,
     conn_pool: &'static LinearObjectPool<super::Conn<T::U>>,
-) -> io::Result<()>
+) -> g::Result<()>
 where
     T: IServerEvent,
     T::U: Default + Sync + Send,
 {
-    // step 1: init tcp listener.
-    let lfd = TcpSocket::new_v4()?;
+    // step 1: change server's state to running.
+    if server.running.swap(true, Ordering::SeqCst) {
+        return Err(g::Err::ServerIsAlreadyRunning);
+    }
+
+    // step 2: init tcp listener.
+    let lfd = match TcpSocket::new_v4() {
+        Err(err) => return Err(g::Err::SocketErr(format!("{:?}", err))),
+        Ok(v) => v,
+    };
 
     #[cfg(unix)]
-    lfd.set_reuseport(true)?;
-    lfd.set_reuseaddr(true)?;
-    lfd.bind(server.host().parse().unwrap())?;
-    let listener = lfd.listen(1024)?;
+    {
+        if let Err(err) = lfd.set_reuseport(true) {
+            return Err(g::Err::SocketErr(format!("{:?}", err)));
+        }
+    }
+    
+    if let Err(err) = lfd.set_reuseaddr(true) {
+        return Err(g::Err::SocketErr(format!("{:?}", err)));
+    }
 
-    // step 2: get shutdown sender and receiver
+    if let Err(err) = lfd.bind(server.host().parse().unwrap()) {
+        return Err(g::Err::SocketErr(format!("{:?}", err)));
+    }
+
+    let listener = match lfd.listen(1024) {
+        Err(err) => return Err(g::Err::SocketErr(format!("{:?}", err))),
+        Ok(v) => v,
+    };
+
+    // step 3: get shutdown sender and receiver
     let shutdown_tx = server.shutdown.clone();
     let mut shutdown_rx = server.shutdown.subscribe();
 
-    // step 3: trigge server running event.
+    // step 4: trigge server running event.
     server.event.on_running(server.clone()).await;
-
-    // step 4: set server state running(true).
-    server.running.store(true, Ordering::SeqCst);
 
     // step 5: accept_loop.
     'accept_loop: loop {
+
+        let event = server.event.clone();
+        let shutdown = shutdown_tx.subscribe();
+        let timeout = server.timeout;
+        let conn = conn_pool.pull();
+
         select! {
             // when recv shutdown signal.
             _ = shutdown_rx.recv() => {
@@ -56,13 +81,16 @@ where
 
             // when connection comming.
             result_accept = listener.accept() => {
-                let (stream, _) =  result_accept?;
+                let stream =  match result_accept {
+                    Err(err) => return Err(g::Err::ServerAcceptError(format!("{:?}", err))),
+                    Ok((v, _)) => v
+                };
+
                 let permit = server.limit_connections.clone().acquire_owned().await.unwrap();
-                let event = server.event.clone();
-                let shutdown = shutdown_tx.subscribe();
-                let timeout = server.timeout;
+
                 tokio::spawn(async move {
-                    conn_handle(stream, conn_pool, timeout, shutdown, event, permit).await;
+                    conn_handle(stream, conn, timeout, shutdown, event).await;
+                    drop(permit)
                 });
             }
         }
@@ -85,7 +113,7 @@ where
 ///
 /// `stream` [TcpStream]
 ///
-/// `conn_pool` lockfree object pool.
+/// `conn` [LinearReusable<'static, super::Conn<T::U>>]
 ///
 /// `timeout` read timeout
 ///
@@ -93,45 +121,33 @@ where
 ///
 /// `event` IEvent implement.
 ///
-/// `permit` Limit Semaphore.
 pub async fn conn_handle<T>(
     mut stream: TcpStream,
-    conn_pool: &'static LinearObjectPool<super::Conn<T::U>>,
+    mut conn: LinearReusable<'static, super::Conn<T::U>>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
-    event: T,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    event: T
 ) where
     T: IEvent,
 {
-    // step 1: get a default Conn<U>.
-    let mut conn = conn_pool.pull();
+    // step 1: active Conn<U>.
+    let (w_tx, mut w_rx, mut conn_shutdown_rx) = conn.acitve(&stream);
 
-    // step 2: active Conn<U>.
-    conn.acitve(&stream);
-
-    // step 3: get socket reader and writer
+    // step 2: get socket reader and writer
     let (mut reader, mut writer) = stream.split();
 
-    // step 4: get write channel receiver and sender.
-    let w_tx = conn.wbuf_sender();
-    let mut w_rx = conn.wbuf_receiver();
-
-    // step 5: get conn shutdown channel receiver.
-    let mut conn_shutdown_rx = conn.shutdown_receiver();
-
-    // step 6: timeout ticker.
+    // step 3: timeout ticker.
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(timeout));
 
-    // step 7: get request instance.
+    // step 4: get request instance.
     let mut req = pack::PACK_POOL.pull();
 
-    // step 8: triger connected event.
+    // step 5: triger connected event.
     if let Err(_) = event.on_connected(&conn).await {
         return;
     }
 
-    // step 9: conn_loop.
+    // step 6: conn_loop.
     'conn_loop: loop {
         ticker.reset();
 
@@ -209,9 +225,6 @@ pub async fn conn_handle<T>(
         }
     }
 
-    // step 10: returns connections permit.
-    drop(permit);
-
-    // step 11: trigger disconnected event.
+    // step 7: trigger disconnected event.
     event.on_disconnected(&conn).await;
 }
