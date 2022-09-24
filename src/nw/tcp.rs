@@ -62,7 +62,7 @@ where
     let mut shutdown_rx = server.shutdown.subscribe();
 
     // step 4: trigge server running event.
-    server.event.on_running(server.clone()).await;
+    server.event.on_running(&server).await;
 
     // step 5: accept_loop.
     'accept_loop: loop {
@@ -99,7 +99,7 @@ where
     server.get_mut().running.store(false, Ordering::SeqCst);
 
     // step 7: trigger server stopped event.
-    server.event.on_stopped(server.clone()).await;
+    server.event.on_stopped(&server).await;
 
     Ok(())
 }

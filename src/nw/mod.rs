@@ -111,7 +111,7 @@ pub trait IServerEvent: IEvent {
     /// # Trigger
     ///
     /// before server start listening.
-    async fn on_running(&self, server: ServerPtr<Self>) {
+    async fn on_running(&self, server: &ServerPtr<Self>) {
         tracing::debug!(
             "server[HOST:{}|MAX:{}|TIMOUT:{}] is running...",
             server.host,
@@ -125,7 +125,7 @@ pub trait IServerEvent: IEvent {
     /// # Trigger
     ///
     /// after server has stopped listen.
-    async fn on_stopped(&self, server: ServerPtr<Self>) {
+    async fn on_stopped(&self, server: &ServerPtr<Self>) {
         tracing::debug!("server[HOST:{}] has stopped...!!!", server.host);
     }
 }
