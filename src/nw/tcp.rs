@@ -7,7 +7,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
     select,
-    sync::broadcast,
+    sync::{broadcast, OwnedSemaphorePermit},
 };
 
 // ---------------------------------------------- Server run ----------------------------------------------
@@ -92,8 +92,7 @@ where
                 let permit = server.limit_connections.clone().acquire_owned().await.unwrap();
 
                 tokio::spawn(async move {
-                    conn_handle(stream, conn, timeout, shutdown, event).await;
-                    drop(permit)
+                    conn_handle(stream, conn, timeout, shutdown, event, permit).await;
                 });
             }
         }
@@ -127,12 +126,13 @@ where
 ///
 /// `event` IEvent implement.
 ///
-pub async fn conn_handle<T>(
+async fn conn_handle<T>(
     mut stream: TcpStream,
     mut conn_lr: LinearReusable<'static, super::Conn<T::U>>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
     event: T,
+    permit: OwnedSemaphorePermit,
 ) where
     T: IEvent,
 {
@@ -281,6 +281,7 @@ pub async fn conn_handle<T>(
     }
 
     // step 7: trigger disconnected event.
+    drop(permit);
     event.on_disconnected(&conn).await;
 }
 
