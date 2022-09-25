@@ -380,7 +380,7 @@ impl<U: Default + Send + Sync> Conn<U> {
     }
 
     /// Conn active by TcpStream
-    fn acitve(
+    pub fn acitve(
         &mut self,
         stream: &TcpStream,
     ) -> (

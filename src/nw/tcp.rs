@@ -144,7 +144,13 @@ pub async fn conn_handle<T>(
     let (mut reader, mut writer) = stream.split();
 
     // step 3: timeout ticker.
-    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(timeout));
+    let interval = if timeout == 0 {
+        std::time::Duration::from_secs(60 * 60)
+    } else {
+        std::time::Duration::from_secs(timeout)
+    };
+
+    let mut ticker = tokio::time::interval(interval);
 
     // step 4: get request instance.
     let mut req = pack::PACK_POOL.pull();
@@ -172,8 +178,10 @@ pub async fn conn_handle<T>(
 
             // timeout ticker
             _ = ticker.tick() => {
-                event.on_error(&conn, g::Err::TcpReadTimeout).await;
-                break 'conn_loop;
+                if timeout > 0 {
+                    event.on_error(&conn, g::Err::TcpReadTimeout).await;
+                    break 'conn_loop;
+                }
             }
 
             // get response from write channel to write to remote.
