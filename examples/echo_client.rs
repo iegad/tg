@@ -28,28 +28,23 @@ async fn work() {
                 Err(err) => panic!("{:?}", err),
             };
 
-            'rsp_loop: loop {
-                if let Err(err) = tg::nw::pack::Package::parse(&mut rbuf, &mut rsp) {
-                    println!("{:?}", err);
-                    break 'reader_loop;
+            while let Ok(v) = tg::nw::tcp::read_pack(&mut rbuf, &mut rsp) {
+                if !v {
+                    break;
                 }
 
-                if rsp.valid() {
-                    assert_eq!(rsp.service_id(), req.service_id());
-                    assert_eq!(rsp.package_id(), req.package_id());
-                    assert_eq!(rsp.idempotent(), req.idempotent());
-                    assert_eq!(rsp.router_id(), req.router_id());
-                    assert_eq!(data.len() + tg::nw::pack::Package::HEAD_SIZE, rsp.raw_len());
-                    assert_eq!(
-                        std::str::from_utf8(data).unwrap(),
-                        std::str::from_utf8(req.data()).unwrap()
-                    );
-                    break 'reader_loop;
-                } else {
-                    if rbuf.len() < tg::nw::pack::Package::HEAD_SIZE {
-                        break 'rsp_loop;
-                    }
-                }
+                assert!(rsp.valid());
+
+                assert_eq!(rsp.service_id(), req.service_id());
+                assert_eq!(rsp.package_id(), req.package_id());
+                assert_eq!(rsp.idempotent(), req.idempotent());
+                assert_eq!(rsp.router_id(), req.router_id());
+                assert_eq!(data.len() + tg::nw::pack::Package::HEAD_SIZE, rsp.raw_len());
+                assert_eq!(
+                    std::str::from_utf8(data).unwrap(),
+                    std::str::from_utf8(req.data()).unwrap()
+                );
+                break 'reader_loop;
             }
         }
     }

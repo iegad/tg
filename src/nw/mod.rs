@@ -22,14 +22,7 @@ use tokio::{
     sync::{broadcast, Semaphore},
 };
 
-/// # Response
-///
-/// network's event process reply to connection data
-pub type Response = Arc<LinearReusable<'static, BytesMut>>;
-
-/// # ConnPtr<T>
-pub type ConnPtr<T> = Arc<LinearReusable<'static, Conn<T>>>;
-
+// ---------------------------------------------- nw::IEvent ----------------------------------------------
 /// # IEvent
 ///
 /// common network events
@@ -67,11 +60,11 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     ///
     /// after connection error.
     async fn on_error(&self, conn: &ConnPtr<Self::U>, err: g::Err) {
-        tracing::error!("[{}|{:?}] => {:?}", conn.sockfd, conn.remote, err);
+        tracing::error!("[{} - {:?}] => {:?}", conn.sockfd, conn.remote, err);
     }
 
     async fn on_connected(&self, conn: &ConnPtr<Self::U>) -> g::Result<()> {
-        tracing::debug!("[{}|{:?}] has connected", conn.sockfd, conn.remote);
+        tracing::debug!("[{} - {:?}] has connected", conn.sockfd, conn.remote);
         Ok(())
     }
 
@@ -81,7 +74,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     ///
     /// after connection has disconnected.
     async fn on_disconnected(&self, conn: &ConnPtr<Self::U>) {
-        tracing::debug!("[{}|{:?}] has disconnected", conn.sockfd, conn.remote);
+        tracing::debug!("[{} - {:?}] has disconnected", conn.sockfd, conn.remote);
     }
 
     /// connection's has package received needs to be process.
@@ -93,9 +86,12 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
         &self,
         conn: &ConnPtr<Self::U>,
         req: &pack::Package,
-    ) -> g::Result<Option<Response>>;
+    ) -> g::Result<Option<pack::Response>>;
 }
 
+// ---------------------------------------------- nw::IServerEvent ----------------------------------------------
+//
+//
 /// # IServerEvent
 ///
 /// server network events
@@ -113,7 +109,7 @@ pub trait IServerEvent: IEvent {
     /// before server start listening.
     async fn on_running(&self, server: &ServerPtr<Self>) {
         tracing::debug!(
-            "server[HOST:{}|MAX:{}|TIMOUT:{}] is running...",
+            "server[ HOST:({}) | MAX:({}) | TIMOUT:({}) ] is running...",
             server.host,
             server.max_connections,
             server.timeout
@@ -126,10 +122,13 @@ pub trait IServerEvent: IEvent {
     ///
     /// after server has stopped listen.
     async fn on_stopped(&self, server: &ServerPtr<Self>) {
-        tracing::debug!("server[HOST:{}] has stopped...!!!", server.host);
+        tracing::debug!("server[ HOST:({}) ] has stopped...!!!", server.host);
     }
 }
 
+// ---------------------------------------------- nw::Server<T> ----------------------------------------------
+//
+//
 /// # Server<T>
 ///
 /// common server option
@@ -303,6 +302,12 @@ where
     }
 }
 
+// ---------------------------------------------- nw::Conn<U> ----------------------------------------------
+//
+//
+/// # ConnPtr<T>
+pub type ConnPtr<T> = Arc<LinearReusable<'static, Conn<T>>>;
+
 /// # Conn<U>
 ///
 /// network connections
@@ -320,10 +325,10 @@ pub struct Conn<U: Default + Send + Sync> {
     recv_seq: u32,
     remote: SocketAddr,
     local: SocketAddr,
-    wbuf_sender: broadcast::Sender<Response>, // write channel
-    shutdown_sender: broadcast::Sender<u8>,   // shutdown channel
-    rbuf: BytesMut,                           // read buffer
-    user_data: Option<U>,                     // user data
+    wbuf_sender: broadcast::Sender<pack::Response>, // write channel
+    shutdown_sender: broadcast::Sender<u8>,         // shutdown channel
+    rbuf: BytesMut,                                 // read buffer
+    user_data: Option<U>,                           // user data
 }
 
 impl<U: Default + Send + Sync> Conn<U> {
@@ -379,8 +384,8 @@ impl<U: Default + Send + Sync> Conn<U> {
         &mut self,
         stream: &TcpStream,
     ) -> (
-        broadcast::Sender<Response>,
-        broadcast::Receiver<Response>,
+        broadcast::Sender<pack::Response>,
+        broadcast::Receiver<pack::Response>,
         broadcast::Receiver<u8>,
     ) {
         stream.set_nodelay(true).unwrap();
@@ -517,7 +522,7 @@ impl<U: Default + Send + Sync> Conn<U> {
 
     /// send response to remote.
     #[inline]
-    pub fn send(&self, data: Response) -> g::Result<()> {
+    pub fn send(&self, data: pack::Response) -> g::Result<()> {
         if self.sockfd == 0 {
             return Err(g::Err::ConnInvalid);
         }
@@ -532,6 +537,9 @@ impl<U: Default + Send + Sync> Conn<U> {
     }
 }
 
+// ---------------------------------------------- UNIT TEST ----------------------------------------------
+//
+//
 #[cfg(test)]
 mod nw_test {
     use super::Conn;

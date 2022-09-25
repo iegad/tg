@@ -16,7 +16,7 @@ impl tg::nw::IEvent for EchoEvent {
         &self,
         conn: &tg::nw::ConnPtr<()>,
         req: &pack::Package,
-    ) -> tg::g::Result<Option<tg::nw::Response>> {
+    ) -> tg::g::Result<Option<pack::Response>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
         let mut rsp = WBUF_POOL.pull();
         req.to_bytes(&mut rsp);
@@ -25,7 +25,7 @@ impl tg::nw::IEvent for EchoEvent {
 
     async fn on_disconnected(&self, conn: &tg::nw::ConnPtr<()>) {
         tracing::debug!(
-            "[{}|{:?}] has disconnected: {}",
+            "[{} - {:?}] has disconnected: {}",
             conn.sockfd(),
             conn.remote(),
             conn.recv_seq()
@@ -43,6 +43,11 @@ lazy_static! {
 #[tokio::main]
 async fn main() {
     utils::init_log(tracing::Level::DEBUG);
+
+    tracing::debug!(
+        "sizeof Server<EchoEvent> => {} bytes",
+        std::mem::size_of::<tg::nw::Server<EchoEvent>>()
+    );
 
     let controller =
         tg::nw::Server::<EchoEvent>::new_ptr("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);

@@ -1,9 +1,13 @@
 use crate::g;
 use bytes::{Buf, BufMut, BytesMut};
 use lazy_static::lazy_static;
-use lockfree_object_pool::LinearObjectPool;
+use lockfree_object_pool::{LinearObjectPool, LinearReusable};
+use std::sync::Arc;
 use type_layout::TypeLayout;
 
+// ---------------------------------------------- static variables ----------------------------------------------
+//
+//
 lazy_static! {
     /// # PACK_POOL
     ///
@@ -56,6 +60,17 @@ lazy_static! {
         });
 }
 
+// ---------------------------------------------- pack::Response ----------------------------------------------
+//
+//
+/// # Response
+///
+/// network's event process reply to connection data
+pub type Response = Arc<LinearReusable<'static, BytesMut>>;
+
+// ---------------------------------------------- pack::Package ----------------------------------------------
+//
+//
 /// # Package
 ///
 /// for network transport
@@ -622,6 +637,9 @@ impl Package {
     }
 }
 
+// ---------------------------------------------- UNIT TEST ----------------------------------------------
+//
+//
 #[cfg(test)]
 mod pack_test {
     use crate::nw::pack::WBUF_POOL;

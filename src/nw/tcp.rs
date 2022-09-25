@@ -1,5 +1,6 @@
 use super::{pack, IEvent, IServerEvent, Server};
 use crate::{g, us::Ptr};
+use bytes::BytesMut;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 use std::sync::{atomic::Ordering, Arc};
 use tokio::{
@@ -9,6 +10,9 @@ use tokio::{
     sync::broadcast,
 };
 
+// ---------------------------------------------- Server run ----------------------------------------------
+//
+//
 /// # server_run<T>
 ///
 /// run a tcp server.
@@ -104,6 +108,9 @@ where
     Ok(())
 }
 
+// ---------------------------------------------- conn handle ----------------------------------------------
+//
+//
 /// # conn_handle<T>
 ///
 /// tcp connection's handler.
@@ -194,7 +201,7 @@ pub async fn conn_handle<T>(
                     Ok(_) => (),
                 }
 
-                loop {
+                'pack_loop: loop {
                     if req.valid() {
                         conn.recv_seq_incre();
                         let option_rsp = match event.on_process(&conn, &req).await {
@@ -216,15 +223,88 @@ pub async fn conn_handle<T>(
                     }
 
                     if !req.valid() && conn.rbuf_mut().len() < pack::Package::HEAD_SIZE {
-                        break;
+                        break 'pack_loop;
                     }
                 }
 
                 conn.check_rbuf();
             }
+
+            // 保留下面的 net.io read 句柄.
+            // 下面这种读取方式是通过使用 read_pack 来解析package, 也可以达到同样的业务效果, 但是性能会低一些.
+            // 原因:
+            //  1, 上面的方式, 只有一个 pack_loop 子循环, 但是下面的方式有两个子循环, 一个用于 read_pack(函数中), 一个是 read_pack外部.
+            // result_read = reader.read_buf(conn.rbuf_mut()) => {
+            //     match result_read {
+            //         Err(err) => {
+            //             event.on_error(&conn, g::Err::TcpReadFailed(format!("{:?}", err))).await;
+            //             break 'conn_loop;
+            //         }
+            //         Ok(0) => break 'conn_loop,
+            //         Ok(_) => (),
+            //     }
+            //     loop {
+            //         let complete = match read_pack(conn.rbuf_mut(), &mut req) {
+            //             Ok(v) => v,
+            //             Err(err) => {
+            //                 event.on_error(&conn, err).await;
+            //                 break 'conn_loop;
+            //             }
+            //         };
+            //         if !complete {
+            //             break;
+            //         }
+            //         assert!(req.valid());
+            //         conn.recv_seq_incre();
+            //         let option_rsp = match event.on_process(&conn, &req).await {
+            //             Err(_) => break 'conn_loop,
+            //             Ok(v) => v,
+            //         };
+            //         req.reset();
+            //         if let Some(rsp_bytes) = option_rsp {
+            //             if let Err(_) = w_tx.send(rsp_bytes) {
+            //                 tracing::error!("w_tx.send failed");
+            //             }
+            //         }
+            //     }
+            //     conn.check_rbuf();
+            // }
         }
     }
 
     // step 7: trigger disconnected event.
     event.on_disconnected(&conn).await;
+}
+
+// ---------------------------------------------- conn handle ----------------------------------------------
+//
+//
+/// # read_pack
+///
+/// read pack from buf.
+///
+/// # Returns
+///
+/// if has any errors returns error.
+///
+/// if the pack if load complete return true.
+///
+/// return false means the pack is loaded-half.
+///
+/// # Example
+///
+/// see [examles/echo_client.rs]
+#[inline]
+pub fn read_pack(buf: &mut BytesMut, pack: &mut pack::Package) -> g::Result<bool> {
+    loop {
+        if pack.valid() {
+            return Ok(true);
+        }
+
+        if buf.len() < pack::Package::HEAD_SIZE {
+            return Ok(false);
+        }
+
+        pack::Package::parse(buf, pack)?;
+    }
 }
