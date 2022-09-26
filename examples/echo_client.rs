@@ -39,7 +39,7 @@ async fn work() {
                 assert_eq!(rsp.package_id(), req.package_id());
                 assert_eq!(rsp.idempotent(), req.idempotent());
                 assert_eq!(rsp.router_id(), req.router_id());
-                assert_eq!(data.len() + tg::nw::pack::Package::HEAD_SIZE, rsp.raw_len());
+                assert_eq!(data.len(), rsp.data_len());
                 assert_eq!(
                     std::str::from_utf8(data).unwrap(),
                     std::str::from_utf8(req.data()).unwrap()

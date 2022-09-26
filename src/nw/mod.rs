@@ -145,16 +145,14 @@ impl<T: IServerEvent> Server<T> {
     /// struct DemoEvent;
     ///
     /// #[async_trait]
-    /// impl tg::nw::IEvent for DemoEvent {
+    /// impl tg::nw::IServerEvent for DemoEvent {
     ///     type U = ();
     ///
-    ///     async fn on_process(&self, conn: &tg::nw::Conn<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::Response>> {
+    ///     async fn on_process(&self, conn: &tg::nw::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::Response>> {
     ///         println!("{:?} => {:?}", conn.remote(), req.data());
     ///         Ok(None)
     ///     }
     /// }
-    ///
-    /// impl tg::nw::IServerEvent for DemoEvent {}
     ///
     /// let server = Server::<DemoEvent>::new_ptr("0.0.0.0:6688", 100, 60);
     /// assert_eq!(server.max_connections(), 100);
@@ -182,16 +180,14 @@ impl<T: IServerEvent> Server<T> {
     /// struct DemoEvent;
     ///
     /// #[async_trait]
-    /// impl tg::nw::IEvent for DemoEvent {
+    /// impl tg::nw::IServerEvent for DemoEvent {
     ///     type U = ();
     ///
-    ///     async fn on_process(&self, conn: &tg::nw::Conn<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::Response>> {
+    ///     async fn on_process(&self, conn: &tg::nw::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::Response>> {
     ///         println!("{:?} => {:?}", conn.remote(), req.data());
     ///         Ok(None)
     ///     }
     /// }
-    ///
-    /// impl tg::nw::IServerEvent for DemoEvent {}
     ///
     /// let server = Server::<DemoEvent>::new("0.0.0.0:6688", 100, 60);
     /// assert_eq!(server.max_connections(), 100);

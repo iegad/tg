@@ -31,7 +31,7 @@ lazy_static! {
     /// req.set_data(data.as_bytes());
     /// assert_eq!(req.service_id(), 1);
     /// assert_eq!(req.package_id(), 2);
-    /// assert_eq!(req.raw_len(), data.len() + Package::HEAD_SIZE);
+    /// assert_eq!(req.data_len(), data.len());
     /// ```
     pub static ref REQ_POOL: LinearObjectPool<Package> =
         LinearObjectPool::new(|| Package::new(), |v| { v.reset() });
@@ -93,11 +93,11 @@ pub type Response = Arc<LinearReusable<'static, BytesMut>>;
 ///
 /// `idempotent`: 32bit: check if the package has already been processed.
 ///
-/// `raw_len`:    32bit: Package's length, include Head's size and Body's size.
+/// `data_len`:    32bit: Body's size.
 ///
 /// # Memory Layout
 ///
-/// | service_id: `2 Bytes` | package_id: `2 Bytes` | router_id: `4 Bytes` | idempotent: `4 Bytes` | raw_len: `4 Bytes` | data: `[0, 1G Bytes]`
+/// | service_id: `2 Bytes` | package_id: `2 Bytes` | router_id: `4 Bytes` | idempotent: `4 Bytes` | data_len: `4 Bytes` | data: `[0, 1G Bytes]`
 ///
 /// # Example
 ///
@@ -105,7 +105,7 @@ pub type Response = Arc<LinearReusable<'static, BytesMut>>;
 /// use tg::nw::pack::Package;
 ///
 /// let p1 = Package::new();
-/// assert_eq!(Package::HEAD_SIZE, p1.raw_len());
+/// assert_eq!(0, p1.data_len());
 ///
 /// let data = "Hello world";
 /// let p2 = Package::with_params(1, 2, 3, 4, data.as_bytes());
@@ -113,7 +113,7 @@ pub type Response = Arc<LinearReusable<'static, BytesMut>>;
 /// assert_eq!(p2.package_id(), 2);
 /// assert_eq!(p2.router_id(), 3);
 /// assert_eq!(p2.idempotent(), 4);
-/// assert_eq!(p2.raw_len(), Package::HEAD_SIZE + data.len());
+/// assert_eq!(p2.data_len(), data.len());
 /// ```
 ///
 /// # updates history
@@ -124,7 +124,7 @@ pub struct Package {
     package_id: u16,
     router_id: u32,
     idempotent: u32,
-    raw_len: usize,
+    data_len: usize,
     data: BytesMut,
 }
 
@@ -151,7 +151,7 @@ impl Package {
 
     /// # Package::new
     ///
-    /// build a default Package. Package.raw_len is Package::HEAD_SIZE.
+    /// build a default Package.
     ///
     /// # Example
     ///
@@ -159,7 +159,7 @@ impl Package {
     /// use tg::nw::pack::Package;
     ///
     /// let p = Package::new();
-    /// assert_eq!(p.raw_len(), Package::HEAD_SIZE);
+    /// assert_eq!(p.data_len(), 0);
     /// ```
     pub fn new() -> Self {
         Self {
@@ -167,7 +167,7 @@ impl Package {
             package_id: 0,
             router_id: 0,
             idempotent: 0,
-            raw_len: Self::HEAD_SIZE,
+            data_len: 0,
             data: BytesMut::new(),
         }
     }
@@ -186,7 +186,7 @@ impl Package {
     /// assert_eq!(p.package_id(), 2);
     /// assert_eq!(p.router_id(), 3);
     /// assert_eq!(p.idempotent(), 4);
-    /// assert_eq!(p.raw_len(), 11 + Package::HEAD_SIZE);
+    /// assert_eq!(p.data_len(), 11);
     /// assert_eq!(std::str::from_utf8(p.data()).unwrap(), "Hello world");
     /// ```
     pub fn with_params(
@@ -201,7 +201,7 @@ impl Package {
             package_id,
             router_id,
             idempotent,
-            raw_len: data.len() + Self::HEAD_SIZE,
+            data_len: data.len(),
             data: BytesMut::from(data),
         }
     }
@@ -301,25 +301,16 @@ impl Package {
         }
 
         let router_id = rbuf.get_u32_le() ^ Self::HEAD_32_KEY;
-        if router_id == 0 {
-            return Err(g::Err::PackHeadInvalid("router_id is invalid"));
-        }
 
         let idempotent = rbuf.get_u32_le() ^ Self::HEAD_32_KEY;
         if idempotent == 0 {
             return Err(g::Err::PackHeadInvalid("idempotent is invalid"));
         }
 
-        let raw_len = (rbuf.get_u32_le() ^ Self::HEAD_32_KEY) as usize;
-        if raw_len < Self::HEAD_SIZE {
-            return Err(g::Err::PackHeadInvalid("Package is illegal"));
-        }
-
-        if raw_len > Self::HEAD_SIZE + Self::MAX_DATA_SIZE {
+        let data_len = (rbuf.get_u32_le() ^ Self::HEAD_32_KEY) as usize;
+        if data_len > Self::MAX_DATA_SIZE {
             return Err(g::Err::PackDataSizeInvalid);
         }
-
-        let data_len = raw_len - Self::HEAD_SIZE;
 
         if data_len > rbuf.len() {
             return Err(g::Err::PackDataSizeInvalid);
@@ -330,7 +321,7 @@ impl Package {
             package_id,
             router_id,
             idempotent,
-            raw_len,
+            data_len,
             data: rbuf.split_to(data_len),
         })
     }
@@ -368,27 +359,20 @@ impl Package {
         }
 
         self.router_id = rbuf.get_u32_le() ^ Self::HEAD_32_KEY;
-        if self.router_id == 0 {
-            return Err(g::Err::PackHeadInvalid("router_id is invalid"));
-        }
 
         self.idempotent = rbuf.get_u32_le() ^ Self::HEAD_32_KEY;
         if self.idempotent == 0 {
             return Err(g::Err::PackHeadInvalid("idempotent is invalid"));
         }
 
-        self.raw_len = (rbuf.get_u32_le() ^ Self::HEAD_32_KEY) as usize;
-        if self.raw_len < Self::HEAD_SIZE {
-            return Err(g::Err::PackHeadInvalid("Package is illegal"));
-        }
-
-        if self.raw_len > Self::HEAD_SIZE + Self::MAX_DATA_SIZE {
+        self.data_len = (rbuf.get_u32_le() ^ Self::HEAD_32_KEY) as usize;
+        if self.data_len > Self::MAX_DATA_SIZE {
             return Err(g::Err::PackDataSizeInvalid);
         }
 
-        if self.raw_len > Self::HEAD_SIZE {
+        if self.data_len > 0 {
             let rbuf_len = rbuf.len();
-            let mut data_len = self.raw_len - Self::HEAD_SIZE;
+            let mut data_len = self.data_len;
             if rbuf_len < data_len {
                 data_len = rbuf_len;
             }
@@ -411,7 +395,7 @@ impl Package {
 
         let rbuf_len = rbuf.len();
 
-        let mut left_len = self.raw_len - Self::HEAD_SIZE - self.data.len();
+        let mut left_len = self.data_len - self.data.len();
         if left_len > rbuf_len {
             left_len = rbuf_len;
         }
@@ -440,7 +424,7 @@ impl Package {
         unsafe {
             self.data.set_len(0);
         }
-        self.raw_len = Self::HEAD_SIZE;
+        self.data_len = 0;
     }
 
     /// # Package.to_bytes
@@ -466,8 +450,8 @@ impl Package {
         wbuf.put_u16_le(self.package_id ^ Self::HEAD_16_KEY);
         wbuf.put_u32_le(self.router_id ^ Self::HEAD_32_KEY);
         wbuf.put_u32_le(self.idempotent ^ Self::HEAD_32_KEY);
-        wbuf.put_u32_le((self.raw_len as u32) ^ Self::HEAD_32_KEY);
-        if self.raw_len > Self::HEAD_SIZE {
+        wbuf.put_u32_le((self.data_len as u32) ^ Self::HEAD_32_KEY);
+        if self.data_len > 0 {
             wbuf.put(&self.data[..]);
         }
     }
@@ -483,18 +467,22 @@ impl Package {
     ///
     /// let mut p = Package::with_params(1, 2, 3, 4, "Hello".as_bytes());
     /// assert_eq!(std::str::from_utf8(p.data()).unwrap(), "Hello");
-    /// assert_eq!(p.raw_len(), Package::HEAD_SIZE + 5);
+    /// assert_eq!(p.data_len(), 5);
     ///
     /// p.append_data(" world".as_bytes());
     /// assert_eq!(std::str::from_utf8(p.data()).unwrap(), "Hello world");
-    /// assert_eq!(p.raw_len(), Package::HEAD_SIZE + 11);
+    /// assert_eq!(p.data_len(), 11);
     /// ```
     #[inline]
-    pub fn append_data(&mut self, data: &[u8]) {
-        self.data.extend_from_slice(data);
-        self.raw_len += data.len();
+    pub fn append_data(&mut self, data: &[u8]) ->g::Result<()> {
+        if self.data_len + data.len() > Self::MAX_DATA_SIZE {
+            return Err(g::Err::PackTooLong);
+        }
 
-        assert!(self.data.len() <= Self::MAX_DATA_SIZE);
+        self.data.extend_from_slice(data);
+        self.data_len += data.len();
+
+        Ok(())
     }
 
     /// # Package.head_valid
@@ -522,7 +510,7 @@ impl Package {
     /// ```
     #[inline]
     pub fn head_valid(&self) -> bool {
-        self.service_id > 0 && self.package_id > 0 && self.router_id > 0 && self.idempotent > 0
+        self.service_id > 0 && self.package_id > 0 && self.idempotent > 0
     }
 
     /// # Package.valid
@@ -561,7 +549,7 @@ impl Package {
     /// ```
     #[inline]
     pub fn valid(&self) -> bool {
-        self.raw_len == Self::HEAD_SIZE + self.data.len() && self.head_valid()
+        self.data_len == self.data.len() && self.head_valid()
     }
 
     /// set package's service_id
@@ -620,19 +608,19 @@ impl Package {
         self.data.clear();
         self.data.extend_from_slice(data);
 
-        self.raw_len = Self::HEAD_SIZE + data.len();
+        self.data_len = data.len();
     }
 
     /// get package's data
     #[inline]
     pub fn data(&self) -> &[u8] {
-        &self.data[..self.raw_len - Self::HEAD_SIZE]
+        &self.data[..self.data_len]
     }
 
     /// set package's raw length, `raw_len == Package::HEAD_SIZE + package.data.len()`.
     #[inline]
-    pub fn raw_len(&self) -> usize {
-        self.raw_len
+    pub fn data_len(&self) -> usize {
+        self.data_len
     }
 }
 
@@ -641,7 +629,7 @@ impl Package {
 //
 #[cfg(test)]
 mod pack_test {
-    use crate::nw::pack::WBUF_POOL;
+    use crate::nw::pack::{WBUF_POOL, self};
 
     use super::Package;
     use bytes::{BufMut, BytesMut};
@@ -680,7 +668,7 @@ mod pack_test {
         assert_eq!(p1.package_id(), 2);
         assert_eq!(p1.router_id(), 3);
         assert_eq!(p1.data().len(), data.len());
-        assert_eq!(p1.raw_len(), data.len() + Package::HEAD_SIZE);
+        assert_eq!(p1.data_len(), data.len());
         assert_eq!(std::str::from_utf8(p1.data()).unwrap(), data);
 
         let p2 = Package::with_params(1, 2, 3, 4, data.as_bytes());
@@ -689,7 +677,7 @@ mod pack_test {
         assert_eq!(p2.package_id(), 2);
         assert_eq!(p2.router_id(), 3);
         assert_eq!(p2.data().len(), data.len());
-        assert_eq!(p2.raw_len(), data.len() + Package::HEAD_SIZE);
+        assert_eq!(p2.data_len(), data.len());
         assert_eq!(std::str::from_utf8(p2.data()).unwrap(), data);
 
         let mut iobuf = BytesMut::with_capacity(1500);
@@ -699,7 +687,7 @@ mod pack_test {
         let iobuf_pos = &iobuf[0] as *const u8;
         assert_eq!(iobuf.capacity(), 1500);
         assert_eq!(iobuf.len(), buf.len());
-        assert_eq!(buf.len(), data.len() + Package::HEAD_SIZE);
+        assert_eq!(buf.len(), data.len() + pack::Package::HEAD_SIZE);
 
         let p3 = Package::from_bytes(&mut iobuf).unwrap();
         assert_eq!(iobuf.capacity(), 1500 - buf.len());
@@ -712,8 +700,8 @@ mod pack_test {
         assert_eq!(p3.service_id(), 1);
         assert_eq!(p3.package_id(), 2);
         assert_eq!(p3.router_id(), 3);
-        assert_eq!(p3.data().len(), 11);
-        assert_eq!(p3.raw_len(), 27);
+        assert_eq!(p3.data().len(), data.len());
+        assert_eq!(p3.data_len(), data.len());
         assert_eq!(std::str::from_utf8(p3.data()).unwrap(), data);
 
         let mut p4 = Package::new();
@@ -724,8 +712,8 @@ mod pack_test {
         assert_eq!(p4.service_id(), 1);
         assert_eq!(p4.package_id(), 2);
         assert_eq!(p4.router_id(), 3);
-        assert_eq!(p4.data().len(), 11);
-        assert_eq!(p4.raw_len(), 27);
+        assert_eq!(p4.data().len(), data.len());
+        assert_eq!(p4.data_len(), data.len());
         assert_eq!(std::str::from_utf8(p4.data()).unwrap(), data);
 
         let mut p5 = Package::new();

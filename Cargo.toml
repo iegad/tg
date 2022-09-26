@@ -5,9 +5,9 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[[bin]]
-name = "gw"
-path = "bin/gw/main.rs"
+# [[bin]]
+# name = "gw"
+# path = "bin/gw/main.rs"
 
 [[example]]
 name = "chat_server"
