@@ -2,7 +2,7 @@ pub mod pack;
 pub mod tcp;
 pub mod tools;
 
-use crate::{g, us::Ptr};
+use crate::g;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
@@ -43,7 +43,7 @@ pub trait IServerEvent: Default + Send + Sync + Clone + 'static {
     ///
     /// after connection error.
     async fn on_error(&self, conn: &ConnPtr<Self::U>, err: g::Err) {
-        tracing::error!("[{} - {:?}] => {:?}", conn.sockfd, conn.remote, err);
+        tracing::error!("[{} - {:?}] => {err}", conn.sockfd, conn.remote);
     }
 
     async fn on_connected(&self, conn: &ConnPtr<Self::U>) -> g::Result<()> {
@@ -76,7 +76,7 @@ pub trait IServerEvent: Default + Send + Sync + Clone + 'static {
     /// # Trigger
     ///
     /// before server start listening.
-    async fn on_running(&self, server: &ServerPtr<Self>) {
+    async fn on_running(&self, server: &Arc<Server<Self>>) {
         tracing::debug!(
             "server[ HOST:({}) | MAX:({}) | TIMOUT:({}) ] is running...",
             server.host,
@@ -90,7 +90,7 @@ pub trait IServerEvent: Default + Send + Sync + Clone + 'static {
     /// # Trigger
     ///
     /// after server has stopped listen.
-    async fn on_stopped(&self, server: &ServerPtr<Self>) {
+    async fn on_stopped(&self, server: &Arc<Server<Self>>) {
         tracing::debug!("server[ HOST:({}) ] has stopped...!!!", server.host);
     }
 }
@@ -112,20 +112,13 @@ pub struct Server<T> {
     timeout: u64,
     running: AtomicBool,
     limit_connections: Arc<Semaphore>,
-    shutdown: broadcast::Sender<u8>,
+    shutdown_tx: broadcast::Sender<u8>,
 }
-
-/// # ServerPtr<T>
-///
-/// `ServerPtr<T>` is `Arc<Ptr<Server<T>>>`'s nickname.
-///
-/// `Ptr` can let Server<T> mutable by immutable refrence.
-pub type ServerPtr<T> = Arc<Ptr<Server<T>>>;
 
 impl<T: IServerEvent> Server<T> {
     /// # Server<T>::new_ptr
     ///
-    /// make a ServerPtr<T>.
+    /// make a Arc<Self>.
     ///
     /// # Params
     ///
@@ -158,8 +151,8 @@ impl<T: IServerEvent> Server<T> {
     /// assert_eq!(server.max_connections(), 100);
     /// assert_eq!(server.host(), "0.0.0.0:6688");
     /// ```
-    pub fn new_ptr(host: &'static str, max_connections: usize, timeout: u64) -> ServerPtr<T> {
-        Ptr::parse(Self::new(host, max_connections, timeout))
+    pub fn new_ptr(host: &'static str, max_connections: usize, timeout: u64) -> Arc<Self> {
+        Arc::new(Self::new(host, max_connections, timeout))
     }
 
     /// # Server<T>::new
@@ -193,7 +186,7 @@ impl<T: IServerEvent> Server<T> {
     /// assert_eq!(server.max_connections(), 100);
     /// assert_eq!(server.host(), "0.0.0.0:6688");
     /// ```
-    pub fn new(host: &'static str, max_connections: usize, timeout: u64) -> Server<T> {
+    pub fn new(host: &'static str, max_connections: usize, timeout: u64) -> Self {
         let (shutdown, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
 
         Self {
@@ -202,7 +195,7 @@ impl<T: IServerEvent> Server<T> {
             timeout,
             limit_connections: Arc::new(Semaphore::new(max_connections)),
             event: T::default(),
-            shutdown,
+            shutdown_tx: shutdown,
             running: AtomicBool::new(false),
         }
     }
@@ -240,9 +233,9 @@ impl<T: IServerEvent> Server<T> {
     /// shutdown server
     #[inline]
     pub fn shutdown(&self) {
-        assert!(self.running());
-        if let Err(err) = self.shutdown.send(1) {
-            tracing::error!("server.shutdown failed: {:?}", err);
+        debug_assert!(self.running());
+        if let Err(err) = self.shutdown_tx.send(1) {
+            tracing::error!("server.shutdown failed: {err}");
         }
     }
 
@@ -251,19 +244,6 @@ impl<T: IServerEvent> Server<T> {
         while self.max_connections > self.limit_connections.available_permits() || self.running() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-    }
-}
-
-impl<T> Default for Server<T>
-where
-    T: IServerEvent,
-{
-    fn default() -> Self {
-        Self::new(
-            g::DEFAULT_HOST,
-            g::DEFAULT_MAX_CONNECTIONS,
-            g::DEFAULT_READ_TIMEOUT,
-        )
     }
 }
 
@@ -507,7 +487,11 @@ pub trait IClientEvent: Sync + Clone + Default + 'static {
     async fn on_connected(&self, cli: &Client) -> g::Result<()>;
     async fn on_disconnected(&self, cli: &Client) -> g::Result<()>;
     async fn on_error(&self, cli: &Client, err: g::Err);
-    async fn on_process(&self, cli: &Client, req: &pack::Package) -> g::Result<Option<pack::Response>>;
+    async fn on_process(
+        &self,
+        cli: &Client,
+        req: &pack::Package,
+    ) -> g::Result<Option<pack::Response>>;
 }
 
 // ---------------------------------------------- Client<T> ----------------------------------------------

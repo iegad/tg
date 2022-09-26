@@ -6,10 +6,19 @@ use std::sync::{Arc, Mutex};
 use tg::{g, nw::pack::WBUF_POOL};
 
 type ConnPtr = tg::nw::ConnPtr<()>;
+#[cfg(unix)]
+type SockType = i32;
+#[cfg(windows)]
+type SockType = u64;
 
 lazy_static! {
-    pub static ref SERVER: tg::nw::ServerPtr<ChatEvent> = tg::nw::Server::new_ptr("0.0.0.0:6688", g::DEFAULT_MAX_CONNECTIONS, g::DEFAULT_READ_TIMEOUT);
-    pub static ref SESSIONS: Arc<Mutex<HashMap<u64, ConnPtr>>> = Arc::new(Mutex::new(HashMap::new()));
+    pub static ref SERVER: Arc<tg::nw::Server<ChatEvent>> = tg::nw::Server::new_ptr(
+        "0.0.0.0:6688",
+        g::DEFAULT_MAX_CONNECTIONS,
+        g::DEFAULT_READ_TIMEOUT
+    );
+    pub static ref SESSIONS: Arc<Mutex<HashMap<SockType, ConnPtr>>> =
+        Arc::new(Mutex::new(HashMap::new()));
     pub static ref CONN_POOL: LinearObjectPool<tg::nw::Conn<()>> = tg::nw::Conn::pool();
 }
 

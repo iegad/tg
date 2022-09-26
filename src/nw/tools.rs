@@ -44,24 +44,24 @@ pub fn bytes_to_sockaddr(buf: &[u8], port: u16) -> g::Result<SocketAddr> {
         4 => {
             let tmp: [u8; 4] = match buf[..4].try_into() {
                 Ok(v) => v,
-                Err(err) => return Err(g::Err::Custom(format!("{}", err))),
+                Err(err) => return Err(g::Err::Custom(format!("{err}"))),
             };
 
             match tmp.try_into() {
                 Ok(v) => v,
-                Err(err) => return Err(g::Err::Custom(format!("{}", err))),
+                Err(err) => return Err(g::Err::Custom(format!("{err}"))),
             }
         }
 
         16 => {
             let tmp: [u8; 16] = match buf[..16].try_into() {
                 Ok(v) => v,
-                Err(err) => return Err(g::Err::Custom(format!("{}", err))),
+                Err(err) => return Err(g::Err::Custom(format!("{err}"))),
             };
 
             match tmp.try_into() {
                 Ok(v) => v,
-                Err(err) => return Err(g::Err::Custom(format!("{}", err))),
+                Err(err) => return Err(g::Err::Custom(format!("{err}"))),
             }
         }
 

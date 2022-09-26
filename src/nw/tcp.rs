@@ -1,8 +1,13 @@
+use crate::g;
+
 use super::{pack, IServerEvent, Server};
-use crate::{g, us::Ptr};
 use bytes::BytesMut;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
-use std::{sync::{atomic::Ordering, Arc}, os::windows::prelude::AsRawSocket};
+#[cfg(unix)]
+use std::os::unix::prelude::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::prelude::AsRawSocket;
+use std::sync::{atomic::Ordering, Arc};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
@@ -23,7 +28,7 @@ use tokio::{
 ///
 /// `conn_pool` Conn<T::U> object pool.
 pub async fn server_run<T>(
-    server: Arc<Ptr<Server<T>>>,
+    server: Arc<Server<T>>,
     conn_pool: &'static LinearObjectPool<super::Conn<T::U>>,
 ) -> g::Result<()>
 where
@@ -37,33 +42,33 @@ where
 
     // step 2: init tcp listener.
     let lfd = match TcpSocket::new_v4() {
-        Err(err) => return Err(g::Err::SocketErr(format!("{:?}", err))),
+        Err(err) => return Err(g::Err::SocketErr(format!("{err}"))),
         Ok(v) => v,
     };
 
     #[cfg(unix)]
     {
         if let Err(err) = lfd.set_reuseport(true) {
-            return Err(g::Err::SocketErr(format!("{:?}", err)));
+            return Err(g::Err::SocketErr(format!("{err}")));
         }
     }
 
     if let Err(err) = lfd.set_reuseaddr(true) {
-        return Err(g::Err::SocketErr(format!("{:?}", err)));
+        return Err(g::Err::SocketErr(format!("{err}")));
     }
 
     if let Err(err) = lfd.bind(server.host().parse().unwrap()) {
-        return Err(g::Err::SocketErr(format!("{:?}", err)));
+        return Err(g::Err::SocketErr(format!("{err}")));
     }
 
     let listener = match lfd.listen(1024) {
-        Err(err) => return Err(g::Err::SocketErr(format!("{:?}", err))),
+        Err(err) => return Err(g::Err::SocketErr(format!("{err}"))),
         Ok(v) => v,
     };
 
     // step 3: get shutdown sender and receiver
-    let shutdown_tx = server.shutdown.clone();
-    let mut shutdown_rx = server.shutdown.subscribe();
+    let shutdown_tx = server.shutdown_tx.clone();
+    let mut shutdown_rx = server.shutdown_tx.subscribe();
 
     // step 4: trigge server running event.
     server.event.on_running(&server).await;
@@ -85,7 +90,7 @@ where
             // when connection comming.
             result_accept = listener.accept() => {
                 let stream =  match result_accept {
-                    Err(err) => return Err(g::Err::ServerAcceptError(format!("{:?}", err))),
+                    Err(err) => return Err(g::Err::ServerAcceptError(format!("{err}"))),
                     Ok((v, _)) => v
                 };
 
@@ -99,7 +104,7 @@ where
     }
 
     // step 6: set server state running(false).
-    server.get_mut().running.store(false, Ordering::SeqCst);
+    server.running.store(false, Ordering::SeqCst);
 
     // step 7: trigger server stopped event.
     server.event.on_stopped(&server).await;
@@ -190,7 +195,7 @@ async fn conn_handle<T: IServerEvent>(
                 };
 
                 if let Err(err) = writer.write_all(&wbuf).await {
-                    event.on_error(&conn, g::Err::TcpWriteFailed(format!("{:?}", err))).await;
+                    event.on_error(&conn, g::Err::TcpWriteFailed(format!("{err}"))).await;
                     break 'conn_loop;
                 }
                 conn.send_seq_incre();
@@ -200,7 +205,7 @@ async fn conn_handle<T: IServerEvent>(
             result_read = reader.read_buf(conn.rbuf_mut()) => {
                 match result_read {
                     Err(err) => {
-                        event.on_error(&conn, g::Err::TcpReadFailed(format!("{:?}", err))).await;
+                        event.on_error(&conn, g::Err::TcpReadFailed(format!("{err}"))).await;
                         break 'conn_loop;
                     }
                     Ok(0) => break 'conn_loop,
@@ -243,13 +248,14 @@ async fn conn_handle<T: IServerEvent>(
     event.on_disconnected(&conn).await;
 }
 
-
 pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<super::Client>) {
     let event = T::default();
 
     let mut stream = match TcpStream::connect(host).await {
         Err(err) => {
-            event.on_error(&cli, g::Err::TcpConnectFailed(format!("{err}"))).await;
+            event
+                .on_error(&cli, g::Err::TcpConnectFailed(format!("{err}")))
+                .await;
             return;
         }
         Ok(v) => v,
@@ -280,7 +286,11 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
     let (w_tx, mut w_rx) = broadcast::channel::<pack::Response>(g::DEFAULT_CHAN_SIZE);
     let (mut reader, mut writer) = stream.split();
 
-    let interval = if cli.timeout > 0 {cli.timeout} else {60*60};
+    let interval = if cli.timeout > 0 {
+        cli.timeout
+    } else {
+        60 * 60
+    };
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
 
     'cli_loop: loop {
@@ -363,7 +373,6 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
             }
         }
     }
-
 }
 
 // ---------------------------------------------- read package ----------------------------------------------

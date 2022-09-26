@@ -237,7 +237,7 @@ impl Package {
     /// let mut p2 = REQ_POOL.pull();
     /// assert_eq!(Package::parse(&mut *buf, &mut p2).unwrap(), ());
     ///
-    /// assert_eq!(format!("{:?}", p1), format!("{:?}", &*p2));
+    /// assert_eq!(format!("{p1}"), format!("{&*p2}"));
     /// ```
     pub fn parse(rbuf: &mut BytesMut, pack: &mut Self) -> g::Result<()> {
         debug_assert!(!pack.valid());
@@ -281,9 +281,9 @@ impl Package {
     /// p1.to_bytes(&mut buf);
     ///
     /// let p2 = Package::from_bytes(&mut buf).unwrap();
-    /// assert_eq!(format!("{:?}", p1), format!("{:?}", p2));
+    /// assert_eq!(format!("{p1}", p1), format!("{p2}", p2));
     /// ```
-    /// 
+    ///
     /// TODO: 实际上, 该函数没并有任何地方使用.
     pub fn from_bytes(rbuf: &mut BytesMut) -> g::Result<Self> {
         if rbuf.len() < Self::HEAD_SIZE {
@@ -372,12 +372,12 @@ impl Package {
 
         if self.data_len > 0 {
             let rbuf_len = rbuf.len();
-            let mut data_len = self.data_len;
-            if rbuf_len < data_len {
-                data_len = rbuf_len;
+            let mut actual_len = self.data_len;
+            if rbuf_len < actual_len {
+                actual_len = rbuf_len;
             }
 
-            self.data = rbuf.split_to(data_len);
+            self.data = rbuf.split_to(actual_len);
         }
 
         Ok(())
@@ -391,7 +391,7 @@ impl Package {
     ///
     /// call this method, package must be half-loaded state.
     fn fill_data(&mut self, rbuf: &mut BytesMut) {
-        assert!(self.head_valid());
+        debug_assert!(self.head_valid());
 
         let rbuf_len = rbuf.len();
 
@@ -444,7 +444,7 @@ impl Package {
     /// ```
     #[inline]
     pub fn to_bytes(&self, wbuf: &mut BytesMut) {
-        assert!(self.valid());
+        debug_assert!(self.valid(), "to_bytes must called by a valid package.");
 
         wbuf.put_u16_le(self.service_id ^ Self::HEAD_16_KEY);
         wbuf.put_u16_le(self.package_id ^ Self::HEAD_16_KEY);
@@ -474,15 +474,13 @@ impl Package {
     /// assert_eq!(p.data_len(), 11);
     /// ```
     #[inline]
-    pub fn append_data(&mut self, data: &[u8]) ->g::Result<()> {
+    pub fn append_data(&mut self, data: &[u8]) -> g::Result<()> {
         if self.data_len + data.len() > Self::MAX_DATA_SIZE {
             return Err(g::Err::PackTooLong);
         }
 
         self.data.extend_from_slice(data);
-        self.data_len += data.len();
-
-        Ok(())
+        Ok(self.data_len += data.len())
     }
 
     /// # Package.head_valid
@@ -603,7 +601,7 @@ impl Package {
     /// set package's data
     #[inline]
     pub fn set_data(&mut self, data: &[u8]) {
-        assert!(data.len() <= Self::MAX_DATA_SIZE);
+        debug_assert!(data.len() <= Self::MAX_DATA_SIZE);
 
         self.data.clear();
         self.data.extend_from_slice(data);
@@ -629,7 +627,7 @@ impl Package {
 //
 #[cfg(test)]
 mod pack_test {
-    use crate::nw::pack::{WBUF_POOL, self};
+    use crate::nw::pack::{self, WBUF_POOL};
 
     use super::Package;
     use bytes::{BufMut, BytesMut};
