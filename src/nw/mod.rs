@@ -22,36 +22,19 @@ use tokio::{
     sync::{broadcast, Semaphore},
 };
 
-// ---------------------------------------------- nw::IEvent ----------------------------------------------
-/// # IEvent
+// ---------------------------------------------- nw::IServerEvent ----------------------------------------------
+//
+//
+/// # IServerEvent
 ///
-/// common network events
-///
-/// # Generic U
-///
-/// User's custom data.
+/// server network events
 ///
 /// # Example
 ///
 /// ```
-/// use async_trait::async_trait;
-///
-/// #[derive(Clone, Copy, Default)]
-/// struct DemoEvent;
-///
-/// #[async_trait]
-/// impl tg::nw::IEvent for DemoEvent {
-///     // make IEvent::U => ().
-///     type U = ();
-///
-///     async fn on_process(&self, conn: &tg::nw::Conn<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::Response>> {
-///         println!("{:?} => {:?}", conn.remote(), req.data());
-///         Ok(None)
-///     }
-/// }
 /// ```
 #[async_trait]
-pub trait IEvent: Default + Send + Sync + Clone + 'static {
+pub trait IServerEvent: Default + Send + Sync + Clone + 'static {
     type U: Sync + Send + Default;
 
     /// connection's error event
@@ -87,21 +70,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
         conn: &ConnPtr<Self::U>,
         req: &pack::Package,
     ) -> g::Result<Option<pack::Response>>;
-}
 
-// ---------------------------------------------- nw::IServerEvent ----------------------------------------------
-//
-//
-/// # IServerEvent
-///
-/// server network events
-///
-/// # Example
-///
-/// ```
-/// ```
-#[async_trait]
-pub trait IServerEvent: IEvent {
     /// server start event
     ///
     /// # Trigger
@@ -535,6 +504,29 @@ impl<U: Default + Send + Sync> Conn<U> {
 
         Ok(())
     }
+}
+
+#[async_trait]
+pub trait IClientEvent: Sync + Clone + Default + 'static {
+    async fn on_connected(&self, cli: &Client) -> g::Result<()>;
+    async fn on_disconnected(&self, cli: &Client) -> g::Result<()>;
+    async fn on_error(&self, cli: &Client, err: g::Err);
+    async fn on_process(&self, cli: &Client, req: &pack::Package) -> g::Result<Option<pack::Response>>;
+}
+
+// ---------------------------------------------- Client<T> ----------------------------------------------
+//
+//
+pub struct Client {
+    #[cfg(unix)]
+    sockfd: i32,
+    #[cfg(windows)]
+    sockfd: u64,
+    timeout: u64,
+    remote: SocketAddr,
+    local: SocketAddr,
+    wbuf_rx: async_channel::Receiver<pack::Response>,
+    shutdown_rx: broadcast::Receiver<u8>,
 }
 
 // ---------------------------------------------- UNIT TEST ----------------------------------------------

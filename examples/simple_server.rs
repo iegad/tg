@@ -7,7 +7,7 @@ use tg::{nw::pack, utils};
 struct SimpleEvent;
 
 #[async_trait]
-impl tg::nw::IEvent for SimpleEvent {
+impl tg::nw::IServerEvent for SimpleEvent {
     type U = ();
 
     async fn on_process(
@@ -33,9 +33,6 @@ impl tg::nw::IEvent for SimpleEvent {
 lazy_static! {
     static ref CONN_POOL: LinearObjectPool<tg::nw::Conn<()>> = tg::nw::Conn::<()>::pool();
 }
-
-#[async_trait]
-impl tg::nw::IServerEvent for SimpleEvent {}
 
 #[tokio::main]
 async fn main() {

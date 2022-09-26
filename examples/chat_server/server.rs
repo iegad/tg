@@ -8,13 +8,8 @@ use tg::{g, nw::pack::WBUF_POOL};
 type ConnPtr = tg::nw::ConnPtr<()>;
 
 lazy_static! {
-    pub static ref SERVER: tg::nw::ServerPtr<ChatEvent> = tg::nw::Server::new_ptr(
-        "0.0.0.0:6688",
-        g::DEFAULT_MAX_CONNECTIONS,
-        g::DEFAULT_READ_TIMEOUT
-    );
-    pub static ref SESSIONS: Arc<Mutex<HashMap<i32, ConnPtr>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    pub static ref SERVER: tg::nw::ServerPtr<ChatEvent> = tg::nw::Server::new_ptr("0.0.0.0:6688", g::DEFAULT_MAX_CONNECTIONS, g::DEFAULT_READ_TIMEOUT);
+    pub static ref SESSIONS: Arc<Mutex<HashMap<u64, ConnPtr>>> = Arc::new(Mutex::new(HashMap::new()));
     pub static ref CONN_POOL: LinearObjectPool<tg::nw::Conn<()>> = tg::nw::Conn::pool();
 }
 
@@ -22,7 +17,7 @@ lazy_static! {
 pub struct ChatEvent;
 
 #[async_trait]
-impl tg::nw::IEvent for ChatEvent {
+impl tg::nw::IServerEvent for ChatEvent {
     type U = ();
 
     async fn on_process(
@@ -48,5 +43,3 @@ impl tg::nw::IEvent for ChatEvent {
         tracing::debug!("[{}] has disconnected", conn.sockfd());
     }
 }
-
-impl tg::nw::IServerEvent for ChatEvent {}

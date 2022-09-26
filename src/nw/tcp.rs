@@ -1,8 +1,8 @@
-use super::{pack, IEvent, IServerEvent, Server};
+use super::{pack, IServerEvent, Server};
 use crate::{g, us::Ptr};
 use bytes::BytesMut;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
-use std::sync::{atomic::Ordering, Arc};
+use std::{sync::{atomic::Ordering, Arc}, os::windows::prelude::AsRawSocket};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
@@ -126,16 +126,14 @@ where
 ///
 /// `event` IEvent implement.
 ///
-async fn conn_handle<T>(
+async fn conn_handle<T: IServerEvent>(
     mut stream: TcpStream,
     mut conn_lr: LinearReusable<'static, super::Conn<T::U>>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
     event: T,
     permit: OwnedSemaphorePermit,
-) where
-    T: IEvent,
-{
+) {
     // step 1: active Conn<U>.
     let (w_tx, mut w_rx, mut conn_shutdown_rx) = conn_lr.acitve(&stream);
     let conn = Arc::new(conn_lr);
@@ -193,7 +191,7 @@ async fn conn_handle<T>(
 
                 if let Err(err) = writer.write_all(&wbuf).await {
                     event.on_error(&conn, g::Err::TcpWriteFailed(format!("{:?}", err))).await;
-                    break;
+                    break 'conn_loop;
                 }
                 conn.send_seq_incre();
             }
@@ -237,46 +235,6 @@ async fn conn_handle<T>(
 
                 conn.check_rbuf();
             }
-
-            // 保留下面的 net.io read 句柄.
-            // 下面这种读取方式是通过使用 read_pack 来解析package, 也可以达到同样的业务效果, 但是性能会低一些.
-            // 原因:
-            //  1, 上面的方式, 只有一个 pack_loop 子循环, 但是下面的方式有两个子循环, 一个用于 read_pack(函数中), 一个是 read_pack外部.
-            // result_read = reader.read_buf(conn.rbuf_mut()) => {
-            //     match result_read {
-            //         Err(err) => {
-            //             event.on_error(&conn, g::Err::TcpReadFailed(format!("{:?}", err))).await;
-            //             break 'conn_loop;
-            //         }
-            //         Ok(0) => break 'conn_loop,
-            //         Ok(_) => (),
-            //     }
-            //     loop {
-            //         let complete = match read_pack(conn.rbuf_mut(), &mut req) {
-            //             Ok(v) => v,
-            //             Err(err) => {
-            //                 event.on_error(&conn, err).await;
-            //                 break 'conn_loop;
-            //             }
-            //         };
-            //         if !complete {
-            //             break;
-            //         }
-            //         assert!(req.valid());
-            //         conn.recv_seq_incre();
-            //         let option_rsp = match event.on_process(&conn, &req).await {
-            //             Err(_) => break 'conn_loop,
-            //             Ok(v) => v,
-            //         };
-            //         req.reset();
-            //         if let Some(rsp_bytes) = option_rsp {
-            //             if let Err(_) = w_tx.send(rsp_bytes) {
-            //                 tracing::error!("w_tx.send failed");
-            //             }
-            //         }
-            //     }
-            //     conn.check_rbuf();
-            // }
         }
     }
 
@@ -285,12 +243,135 @@ async fn conn_handle<T>(
     event.on_disconnected(&conn).await;
 }
 
-// ---------------------------------------------- conn handle ----------------------------------------------
+
+pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<super::Client>) {
+    let event = T::default();
+
+    let mut stream = match TcpStream::connect(host).await {
+        Err(err) => {
+            event.on_error(&cli, g::Err::TcpConnectFailed(format!("{err}"))).await;
+            return;
+        }
+        Ok(v) => v,
+    };
+
+    unsafe {
+        let cli = &mut *(cli.as_ref() as *const super::Client as *mut super::Client);
+        cli.remote = stream.peer_addr().unwrap();
+        cli.local = stream.local_addr().unwrap();
+        #[cfg(windows)]
+        {
+            cli.sockfd = stream.as_raw_socket();
+        }
+        #[cfg(unix)]
+        {
+            cli.sockfd = stream.as_raw_fd();
+        }
+    }
+
+    if let Err(_) = event.on_connected(&cli).await {
+        return;
+    }
+
+    let mut req = pack::REQ_POOL.pull();
+    let mut rbuf = BytesMut::with_capacity(g::DEFAULT_BUF_SIZE);
+    let mut shutdown_rx = cli.shutdown_rx.resubscribe();
+    let wbuf_rx = cli.wbuf_rx.clone();
+    let (w_tx, mut w_rx) = broadcast::channel::<pack::Response>(g::DEFAULT_CHAN_SIZE);
+    let (mut reader, mut writer) = stream.split();
+
+    let interval = if cli.timeout > 0 {cli.timeout} else {60*60};
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
+
+    'cli_loop: loop {
+        select! {
+            _ = shutdown_rx.recv() => {
+                break 'cli_loop;
+            }
+
+            _ = ticker.tick() => {
+                if cli.timeout > 0 {
+                    // TODO
+                }
+            }
+
+            result_rsp = w_rx.recv() => {
+                let rsp = match result_rsp {
+                    Err(err) => {
+                        tracing::error!("{err}");
+                        break 'cli_loop;
+                    }
+                    Ok(v) => v,
+                };
+
+                if let Err(err) = writer.write_all(&rsp).await {
+                    event.on_error(&cli, g::Err::TcpWriteFailed(format!("{err}"))).await;
+                    break 'cli_loop;
+                }
+            }
+
+            result_wbuf = wbuf_rx.recv() => {
+                let wbuf = match result_wbuf {
+                    Err(err) => {
+                        tracing::error!("{err}");
+                        break 'cli_loop;
+                    }
+                    Ok(v) => v,
+                };
+
+                if let Err(_) = w_tx.send(wbuf) {
+                    tracing::error!("w_tx send failed");
+                    break 'cli_loop;
+                }
+            }
+
+            result_read = reader.read_buf(&mut rbuf) => {
+                match result_read {
+                    Err(err) => {
+                        event.on_error(&cli, g::Err::TcpReadFailed(format!("{err}"))).await;
+                        break 'cli_loop;
+                    }
+                    Ok(0) => break 'cli_loop,
+                    Ok(_) => (),
+                }
+
+                'pack_loop: loop {
+                    if req.valid() {
+                        let option_rsp = match event.on_process(&cli, &req).await {
+                            Err(_) => break 'cli_loop,
+                            Ok(v) => v,
+                        };
+
+                        req.reset();
+                        if let Some(rsp) = option_rsp {
+                            if let Err(_) = w_tx.send(rsp) {
+                                tracing::error!("w_tx send failed");
+                                break 'cli_loop;
+                            }
+                        }
+                    } else {
+                        if let Err(err) = pack::Package::parse(&mut rbuf, &mut req) {
+                            event.on_error(&cli, err).await;
+                            break 'cli_loop;
+                        }
+                    }
+
+                    if !req.valid() && rbuf.len() < pack::Package::HEAD_SIZE {
+                        break 'pack_loop;
+                    }
+                }
+            }
+        }
+    }
+
+}
+
+// ---------------------------------------------- read package ----------------------------------------------
 //
 //
 /// # read_pack
 ///
-/// read pack from buf.
+/// read pack from buf, this function is good to called by sync io.
 ///
 /// # Returns
 ///

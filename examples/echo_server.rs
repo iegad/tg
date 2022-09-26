@@ -9,7 +9,7 @@ use tg::{nw::pack, utils};
 struct EchoEvent;
 
 #[async_trait]
-impl tg::nw::IEvent for EchoEvent {
+impl tg::nw::IServerEvent for EchoEvent {
     type U = ();
 
     async fn on_process(
@@ -32,9 +32,6 @@ impl tg::nw::IEvent for EchoEvent {
         );
     }
 }
-
-#[async_trait]
-impl tg::nw::IServerEvent for EchoEvent {}
 
 lazy_static! {
     static ref CONN_POOL: LinearObjectPool<tg::nw::Conn<()>> = tg::nw::Conn::<()>::pool();
