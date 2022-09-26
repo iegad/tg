@@ -240,9 +240,7 @@ impl Package {
     /// assert_eq!(format!("{:?}", p1), format!("{:?}", &*p2));
     /// ```
     pub fn parse(rbuf: &mut BytesMut, pack: &mut Self) -> g::Result<()> {
-        if pack.valid() {
-            return Ok(());
-        }
+        debug_assert!(!pack.valid());
 
         if pack.head_valid() {
             if rbuf.len() == 0 {
@@ -257,8 +255,7 @@ impl Package {
             return Err(g::Err::BufSizeInvalid);
         }
 
-        pack.from_buf(rbuf)?;
-        Ok(())
+        pack.from_buf(rbuf)
     }
 
     /// # Package::from_bytes
@@ -286,6 +283,8 @@ impl Package {
     /// let p2 = Package::from_bytes(&mut buf).unwrap();
     /// assert_eq!(format!("{:?}", p1), format!("{:?}", p2));
     /// ```
+    /// 
+    /// TODO: 实际上, 该函数没并有任何地方使用.
     pub fn from_bytes(rbuf: &mut BytesMut) -> g::Result<Self> {
         if rbuf.len() < Self::HEAD_SIZE {
             return Err(g::Err::PackHeadInvalid("Head size is invalid"));
