@@ -248,7 +248,7 @@ async fn conn_handle<T: IServerEvent>(
     event.on_disconnected(&conn).await;
 }
 
-pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<super::Client>) {
+pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<super::Client<T::U>>) {
     let event = T::default();
 
     let mut stream = match TcpStream::connect(host).await {
@@ -262,7 +262,7 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
     };
 
     unsafe {
-        let cli = &mut *(cli.as_ref() as *const super::Client as *mut super::Client);
+        let cli = &mut *(cli.as_ref() as *const super::Client<T::U> as *mut super::Client<T::U>);
         cli.remote = stream.peer_addr().unwrap();
         cli.local = stream.local_addr().unwrap();
         #[cfg(windows)]
@@ -281,11 +281,11 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
 
     let mut req = pack::REQ_POOL.pull();
     let mut rbuf = BytesMut::with_capacity(g::DEFAULT_BUF_SIZE);
-    let mut shutdown_rx = cli.shutdown_rx.resubscribe();
-    let wbuf_rx = cli.wbuf_rx.clone();
-    let (w_tx, mut w_rx) = broadcast::channel::<pack::Response>(g::DEFAULT_CHAN_SIZE);
+    let mut shutdown_rx = cli.shutdown_reveiver();
+    let wbuf_consumer = cli.wbuf_cosumer.clone();
+    let mut w_rx = cli.wbuf_receiver();
+    let w_tx = cli.wbuf_sender();
     let (mut reader, mut writer) = stream.split();
-
     let interval = if cli.timeout > 0 {
         cli.timeout
     } else {
@@ -295,16 +295,19 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
 
     'cli_loop: loop {
         select! {
+            // close client
             _ = shutdown_rx.recv() => {
                 break 'cli_loop;
             }
 
+            // timoeut
             _ = ticker.tick() => {
                 if cli.timeout > 0 {
-                    // TODO
+                    // TODO: ping
                 }
             }
 
+            // response write
             result_rsp = w_rx.recv() => {
                 let rsp = match result_rsp {
                     Err(err) => {
@@ -320,7 +323,8 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
                 }
             }
 
-            result_wbuf = wbuf_rx.recv() => {
+            // wbuf consumer
+            result_wbuf = wbuf_consumer.recv() => {
                 let wbuf = match result_wbuf {
                     Err(err) => {
                         tracing::error!("{err}");
@@ -335,6 +339,7 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
                 }
             }
 
+            // read package
             result_read = reader.read_buf(&mut rbuf) => {
                 match result_read {
                     Err(err) => {
@@ -373,6 +378,8 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
             }
         }
     }
+
+    event.on_disconnected(&cli);
 }
 
 // ---------------------------------------------- read package ----------------------------------------------

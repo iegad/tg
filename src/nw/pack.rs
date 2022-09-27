@@ -237,7 +237,7 @@ impl Package {
     /// let mut p2 = REQ_POOL.pull();
     /// assert_eq!(Package::parse(&mut *buf, &mut p2).unwrap(), ());
     ///
-    /// assert_eq!(format!("{p1}"), format!("{&*p2}"));
+    /// assert_eq!(format!("{:?}", p1), format!("{:?}", &*p2));
     /// ```
     pub fn parse(rbuf: &mut BytesMut, pack: &mut Self) -> g::Result<()> {
         debug_assert!(!pack.valid());
@@ -281,7 +281,7 @@ impl Package {
     /// p1.to_bytes(&mut buf);
     ///
     /// let p2 = Package::from_bytes(&mut buf).unwrap();
-    /// assert_eq!(format!("{p1}", p1), format!("{p2}", p2));
+    /// assert_eq!(format!("{:?}", p1), format!("{:?}", p2));
     /// ```
     ///
     /// TODO: 实际上, 该函数没并有任何地方使用.

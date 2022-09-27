@@ -32,6 +32,21 @@ use tokio::{
 /// # Example
 ///
 /// ```
+/// use async_trait::async_trait;
+///
+/// #[derive(Clone, Copy, Default)]
+/// struct DemoEvent;
+///
+/// #[async_trait]
+/// impl tg::nw::IServerEvent for DemoEvent {
+///     // make IServerEvent::U => ().
+///     type U = ();
+///
+///     async fn on_process(&self, conn: &tg::nw::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::Response>> {
+///         println!("{:?} => {:?}", conn.remote(), req.data());
+///         Ok(None)
+///     }
+/// }
 /// ```
 #[async_trait]
 pub trait IServerEvent: Default + Send + Sync + Clone + 'static {
@@ -484,12 +499,24 @@ impl<U: Default + Send + Sync> Conn<U> {
 
 #[async_trait]
 pub trait IClientEvent: Sync + Clone + Default + 'static {
-    async fn on_connected(&self, cli: &Client) -> g::Result<()>;
-    async fn on_disconnected(&self, cli: &Client) -> g::Result<()>;
-    async fn on_error(&self, cli: &Client, err: g::Err);
+    type U: Default + Send + Sync;
+
+    async fn on_connected(&self, cli: &Client<Self::U>) -> g::Result<()> {
+        tracing::debug!("{:?} => {:?} has connected", cli.local, cli.remote);
+        Ok(())
+    }
+
+    fn on_disconnected(&self, cli: &Client<Self::U>) {
+        tracing::debug!("{:?} => {:?} has disconnected", cli.local, cli.remote);
+    }
+
+    async fn on_error(&self, cli: &Client<Self::U>, err: g::Err) {
+        tracing::error!("{:?} => {:?}", cli.local, err);
+    }
+
     async fn on_process(
         &self,
-        cli: &Client,
+        cli: &Client<Self::U>,
         req: &pack::Package,
     ) -> g::Result<Option<pack::Response>>;
 }
@@ -497,7 +524,7 @@ pub trait IClientEvent: Sync + Clone + Default + 'static {
 // ---------------------------------------------- Client<T> ----------------------------------------------
 //
 //
-pub struct Client {
+pub struct Client<U: Default + Send + Sync> {
     #[cfg(unix)]
     sockfd: i32,
     #[cfg(windows)]
@@ -505,8 +532,91 @@ pub struct Client {
     timeout: u64,
     remote: SocketAddr,
     local: SocketAddr,
-    wbuf_rx: async_channel::Receiver<pack::Response>,
+    wbuf_cosumer: async_channel::Receiver<pack::Response>,
     shutdown_rx: broadcast::Receiver<u8>,
+    wbuf_tx: broadcast::Sender<pack::Response>,
+    user_data: Option<U>,
+}
+
+impl<U: Default + Send + Sync> Client<U> {
+    pub fn new(
+        timeout: u64,
+        wbuf_rx: async_channel::Receiver<pack::Response>,
+        shutdown_rx: broadcast::Receiver<u8>,
+        user_data: Option<U>,
+    ) -> Self {
+        let (wbuf_tx, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
+
+        Self {
+            sockfd: 0,
+            timeout,
+            remote: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
+            local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
+            wbuf_cosumer: wbuf_rx,
+            shutdown_rx,
+            wbuf_tx,
+            user_data,
+        }
+    }
+
+    #[inline]
+    #[cfg(unix)]
+    pub fn sockfd(&self) -> i32 {
+        self.sockfd
+    }
+
+    #[inline]
+    #[cfg(windows)]
+    pub fn sockfd(&self) -> u64 {
+        self.sockfd
+    }
+
+    #[inline]
+    pub fn timeout(&self) -> u64 {
+        self.timeout
+    }
+
+    #[inline]
+    pub fn remote(&self) -> &SocketAddr {
+        &self.remote
+    }
+
+    #[inline]
+    pub fn local(&self) -> &SocketAddr {
+        &self.local
+    }
+
+    #[inline]
+    pub fn wbuf_consumer(&self) -> async_channel::Receiver<pack::Response> {
+        self.wbuf_cosumer.clone()
+    }
+
+    #[inline]
+    pub fn shutdown_reveiver(&self) -> broadcast::Receiver<u8> {
+        self.shutdown_rx.resubscribe()
+    }
+
+    #[inline]
+    pub fn user_data(&self) -> Option<&U> {
+        self.user_data.as_ref()
+    }
+
+    #[inline]
+    pub fn send(&self, wbuf: pack::Response) {
+        if let Err(_) = self.wbuf_tx.send(wbuf) {
+            tracing::debug!("wbuf_tx.send failed");
+        }
+    }
+
+    #[inline]
+    pub fn wbuf_receiver(&self) -> broadcast::Receiver<pack::Response> {
+        self.wbuf_tx.subscribe()
+    }
+
+    #[inline]
+    pub fn wbuf_sender(&self) -> broadcast::Sender<pack::Response> {
+        self.wbuf_tx.clone()
+    }
 }
 
 // ---------------------------------------------- UNIT TEST ----------------------------------------------
