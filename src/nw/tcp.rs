@@ -1,6 +1,5 @@
-use crate::g;
-
 use super::{pack, IServerEvent, Server};
+use crate::g;
 use bytes::BytesMut;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 #[cfg(unix)]

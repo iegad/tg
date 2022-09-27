@@ -609,12 +609,12 @@ impl<U: Default + Send + Sync> Client<U> {
     }
 
     #[inline]
-    pub fn wbuf_receiver(&self) -> broadcast::Receiver<pack::Response> {
+    fn wbuf_receiver(&self) -> broadcast::Receiver<pack::Response> {
         self.wbuf_tx.subscribe()
     }
 
     #[inline]
-    pub fn wbuf_sender(&self) -> broadcast::Sender<pack::Response> {
+    fn wbuf_sender(&self) -> broadcast::Sender<pack::Response> {
         self.wbuf_tx.clone()
     }
 }
