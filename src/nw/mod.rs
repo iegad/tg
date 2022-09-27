@@ -280,7 +280,7 @@ pub struct Conn<U: Default + Send + Sync> {
     sockfd: i32, // unix raw socket
     #[cfg(windows)]
     sockfd: RawSocket, // windows raw socket
-    idempoetnt: u32, // current idempotent
+    idempotent: u32, // current idempotent
     send_seq: u32,
     recv_seq: u32,
     remote: SocketAddr,
@@ -302,7 +302,7 @@ impl<U: Default + Send + Sync> Conn<U> {
         let (shutdown_sender, _) = broadcast::channel(1);
         Self {
             sockfd: 0,
-            idempoetnt: 0,
+            idempotent: 0,
             send_seq: 0,
             recv_seq: 0,
             remote: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
@@ -374,7 +374,7 @@ impl<U: Default + Send + Sync> Conn<U> {
     #[inline]
     fn reset(&mut self) {
         self.sockfd = 0;
-        self.idempoetnt = 0;
+        self.idempotent = 0;
         self.send_seq = 0;
         self.recv_seq = 0;
         self.user_data = None;

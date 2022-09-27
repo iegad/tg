@@ -374,6 +374,11 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
                         break 'pack_loop;
                     }
                 }
+
+                if rbuf.len() < g::DEFAULT_BUF_SIZE {
+                    rbuf.resize(g::DEFAULT_BUF_SIZE, 0);
+                    unsafe{ rbuf.set_len(0); }
+                }
             }
         }
     }

@@ -19,9 +19,10 @@ impl tg::nw::IClientEvent for ChatEvent {
         req: &pack::Package,
     ) -> g::Result<Option<pack::Response>> {
         tracing::debug!(
-            "from server[{:?}]: {}",
+            "from server[{:?}]: {} => {}",
             cli.local(),
-            std::str::from_utf8(req.data()).unwrap()
+            std::str::from_utf8(req.data()).unwrap(),
+            req.idempotent(),
         );
 
         Ok(None)
@@ -45,6 +46,21 @@ async fn main() {
     });
 
     let mut idempotent = 1;
+
+    for _ in 0..10000 {
+        let mut req = pack::REQ_POOL.pull();
+        req.set_service_id(1);
+        req.set_package_id(1);
+        req.set_idempotent(idempotent);
+        req.set_data("Hello world".as_bytes());
+
+        let mut wbuf = pack::WBUF_POOL.pull();
+        req.to_bytes(&mut wbuf);
+
+        p.send(Arc::new(wbuf)).await.unwrap();
+        idempotent += 1;
+    }
+
     'stdin_loop: loop {
         let result_read = reader.read_line(&mut line).await;
         if let Err(err) = result_read {
