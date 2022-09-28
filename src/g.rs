@@ -54,6 +54,7 @@ pub enum Err {
     //
     /// 无效的端口
     NwInvalidPort,
+    
     /// 无效的IP
     NwInvalidIP,
 

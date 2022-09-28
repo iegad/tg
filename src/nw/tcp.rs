@@ -197,7 +197,7 @@ async fn conn_handle<T: IServerEvent>(
                     event.on_error(&conn, g::Err::TcpWriteFailed(format!("{err}"))).await;
                     break 'conn_loop;
                 }
-                conn.send_seq_incre();
+                conn.send_seq_incr();
             }
 
             // connection read data.
@@ -213,7 +213,7 @@ async fn conn_handle<T: IServerEvent>(
 
                 'pack_loop: loop {
                     if req.valid() {
-                        conn.recv_seq_incre();
+                        conn.recv_seq_incr();
                         let option_rsp = match event.on_process(&conn, &req).await {
                             Err(_) => break 'conn_loop,
                             Ok(v) => v,
@@ -247,6 +247,10 @@ async fn conn_handle<T: IServerEvent>(
     event.on_disconnected(&conn).await;
 }
 
+
+// ---------------------------------------------- conn handle ----------------------------------------------
+//
+//
 pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<super::Client<T::U>>) {
     let event = T::default();
 
@@ -279,11 +283,10 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
     }
 
     let mut req = pack::REQ_POOL.pull();
-    let mut rbuf = BytesMut::with_capacity(g::DEFAULT_BUF_SIZE);
-    let mut shutdown_rx = cli.shutdown_reveiver();
-    let wbuf_consumer = cli.wbuf_cosumer.clone();
-    let mut w_rx = cli.wbuf_receiver();
-    let w_tx = cli.wbuf_sender();
+    let (mut shutdown_rx, 
+        wbuf_consumer, 
+        w_tx, 
+        mut w_rx) = cli.suit();
     let (mut reader, mut writer) = stream.split();
     let interval = if cli.timeout > 0 {
         cli.timeout
@@ -320,6 +323,7 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
                     event.on_error(&cli, g::Err::TcpWriteFailed(format!("{err}"))).await;
                     break 'cli_loop;
                 }
+                cli.send_seq_incr();
             }
 
             // wbuf consumer
@@ -339,7 +343,7 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
             }
 
             // read package
-            result_read = reader.read_buf(&mut rbuf) => {
+            result_read = reader.read_buf(cli.rbuf_mut()) => {
                 match result_read {
                     Err(err) => {
                         event.on_error(&cli, g::Err::TcpReadFailed(format!("{err}"))).await;
@@ -351,11 +355,13 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
 
                 'pack_loop: loop {
                     if req.valid() {
+                        cli.recv_seq_incr();
                         let option_rsp = match event.on_process(&cli, &req).await {
                             Err(_) => break 'cli_loop,
                             Ok(v) => v,
                         };
 
+                        cli.set_idempotent(req.idempotent());
                         req.reset();
                         if let Some(rsp) = option_rsp {
                             if let Err(_) = w_tx.send(rsp) {
@@ -364,21 +370,18 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
                             }
                         }
                     } else {
-                        if let Err(err) = pack::Package::parse(&mut rbuf, &mut req) {
+                        if let Err(err) = pack::Package::parse(cli.rbuf_mut(), &mut req) {
                             event.on_error(&cli, err).await;
                             break 'cli_loop;
                         }
                     }
 
-                    if !req.valid() && rbuf.len() < pack::Package::HEAD_SIZE {
+                    if !req.valid() && cli.rbuf().len() < pack::Package::HEAD_SIZE {
                         break 'pack_loop;
                     }
                 }
 
-                if rbuf.len() < g::DEFAULT_BUF_SIZE {
-                    rbuf.resize(g::DEFAULT_BUF_SIZE, 0);
-                    unsafe{ rbuf.set_len(0); }
-                }
+                cli.check_rbuf();
             }
         }
     }

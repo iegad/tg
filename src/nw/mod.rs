@@ -447,7 +447,7 @@ impl<U: Default + Send + Sync> Conn<U> {
     }
 
     #[inline]
-    pub fn recv_seq_incre(&self) {
+    pub fn recv_seq_incr(&self) {
         unsafe {
             let p = &self.recv_seq as *const u32 as *mut u32;
             *p += 1;
@@ -461,7 +461,7 @@ impl<U: Default + Send + Sync> Conn<U> {
     }
 
     #[inline]
-    pub fn send_seq_incre(&self) {
+    pub fn send_seq_incr(&self) {
         unsafe {
             let p = &self.send_seq as *const u32 as *mut u32;
             *p += 1;
@@ -527,12 +527,16 @@ pub trait IClientEvent: Sync + Clone + Default + 'static {
 pub struct Client<U: Default + Send + Sync> {
     #[cfg(unix)]
     sockfd: i32,
+    recv_seq: u32,
+    send_seq: u32,
+    idempotent: u32,
     #[cfg(windows)]
     sockfd: u64,
     timeout: u64,
     remote: SocketAddr,
     local: SocketAddr,
-    wbuf_cosumer: async_channel::Receiver<pack::Response>,
+    rbuf: BytesMut,
+    wbuf_consumer: async_channel::Receiver<pack::Response>,
     shutdown_rx: broadcast::Receiver<u8>,
     wbuf_tx: broadcast::Sender<pack::Response>,
     user_data: Option<U>,
@@ -541,7 +545,7 @@ pub struct Client<U: Default + Send + Sync> {
 impl<U: Default + Send + Sync> Client<U> {
     pub fn new(
         timeout: u64,
-        wbuf_rx: async_channel::Receiver<pack::Response>,
+        wbuf_consumer: async_channel::Receiver<pack::Response>,
         shutdown_rx: broadcast::Receiver<u8>,
         user_data: Option<U>,
     ) -> Self {
@@ -549,10 +553,14 @@ impl<U: Default + Send + Sync> Client<U> {
 
         Self {
             sockfd: 0,
+            send_seq: 0,
+            recv_seq: 0,
+            idempotent: 0,
             timeout,
             remote: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
             local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
-            wbuf_cosumer: wbuf_rx,
+            rbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
+            wbuf_consumer,
             shutdown_rx,
             wbuf_tx,
             user_data,
@@ -572,6 +580,45 @@ impl<U: Default + Send + Sync> Client<U> {
     }
 
     #[inline]
+    pub fn recv_seq(&self) -> u32 {
+        self.recv_seq
+    }
+
+    #[inline]
+    pub fn recv_seq_incr(&self) {
+        unsafe {
+            let p = &self.recv_seq as *const u32 as *mut u32;
+            *p += 1;
+        }
+    }
+
+    #[inline]
+    pub fn send_seq(&self) -> u32 {
+        self.send_seq
+    }
+
+    #[inline]
+    pub fn send_seq_incr(&self) {
+        unsafe {
+            let p = &self.send_seq as *const u32 as *mut u32;
+            *p += 1;
+        }
+    }
+
+    #[inline]
+    pub fn idempotent(&self) -> u32 {
+        self.idempotent
+    }
+
+    #[inline]
+    fn set_idempotent(&self, idempotent: u32) {
+        unsafe {
+            let p = &self.idempotent as *const u32 as *mut u32;
+            *p = idempotent;
+        }
+    }
+
+    #[inline]
     pub fn timeout(&self) -> u64 {
         self.timeout
     }
@@ -587,13 +634,8 @@ impl<U: Default + Send + Sync> Client<U> {
     }
 
     #[inline]
-    pub fn wbuf_consumer(&self) -> async_channel::Receiver<pack::Response> {
-        self.wbuf_cosumer.clone()
-    }
-
-    #[inline]
-    pub fn shutdown_reveiver(&self) -> broadcast::Receiver<u8> {
-        self.shutdown_rx.resubscribe()
+    fn suit(&self) -> (broadcast::Receiver<u8>, async_channel::Receiver<pack::Response>, broadcast::Sender<pack::Response>, broadcast::Receiver<pack::Response>) {
+        (self.shutdown_rx.resubscribe(), self.wbuf_consumer.clone(), self.wbuf_tx.clone(), self.wbuf_tx.subscribe())
     }
 
     #[inline]
@@ -609,13 +651,25 @@ impl<U: Default + Send + Sync> Client<U> {
     }
 
     #[inline]
-    fn wbuf_receiver(&self) -> broadcast::Receiver<pack::Response> {
-        self.wbuf_tx.subscribe()
+    pub fn rbuf_mut(&self) -> &mut BytesMut{
+        unsafe{ &mut *(&self.rbuf as *const BytesMut as *mut BytesMut) }
     }
 
     #[inline]
-    fn wbuf_sender(&self) -> broadcast::Sender<pack::Response> {
-        self.wbuf_tx.clone()
+    pub fn rbuf(&self) -> &BytesMut {
+        &self.rbuf
+    }
+
+    #[inline]
+    pub fn check_rbuf(&self) {
+        let n = self.rbuf.len();
+        if n < pack::Package::HEAD_SIZE {
+            unsafe {
+                let rbuf = &mut *(&self.rbuf as *const BytesMut as *mut BytesMut);
+                rbuf.resize(g::DEFAULT_BUF_SIZE, 0);
+                rbuf.set_len(n)
+            };
+        }
     }
 }
 
