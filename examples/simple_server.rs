@@ -14,7 +14,7 @@ impl tg::nw::IServerEvent for SimpleEvent {
         &self,
         conn: &tg::nw::ConnPtr<()>,
         req: &pack::Package,
-    ) -> tg::g::Result<Option<pack::Response>> {
+    ) -> tg::g::Result<Option<pack::PackBuf>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
         Ok(None)
     }

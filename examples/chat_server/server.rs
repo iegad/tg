@@ -15,7 +15,7 @@ lazy_static! {
     pub static ref SERVER: Arc<tg::nw::Server<ChatEvent>> = tg::nw::Server::new_ptr(
         "0.0.0.0:6688",
         g::DEFAULT_MAX_CONNECTIONS,
-        g::DEFAULT_READ_TIMEOUT
+        0
     );
     pub static ref SESSIONS: Arc<Mutex<HashMap<SockType, ConnPtr>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -33,7 +33,7 @@ impl tg::nw::IServerEvent for ChatEvent {
         &self,
         conn: &ConnPtr,
         req: &tg::nw::pack::Package,
-    ) -> g::Result<Option<tg::nw::pack::Response>> {
+    ) -> g::Result<Option<tg::nw::pack::PackBuf>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
 
         let mut wbuf = WBUF_POOL.pull();

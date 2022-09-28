@@ -17,7 +17,7 @@ impl tg::nw::IClientEvent for ChatEvent {
         &self,
         cli: &tg::nw::Client<()>,
         req: &pack::Package,
-    ) -> g::Result<Option<pack::Response>> {
+    ) -> g::Result<Option<pack::PackBuf>> {
         tracing::debug!(
             "from server[{:?}]: {} => {}",
             cli.local(),

@@ -27,7 +27,7 @@ use tokio::{
 //
 /// # IServerEvent
 ///
-/// server network events
+/// 服务端网络事件
 ///
 /// # Example
 ///
@@ -52,45 +52,50 @@ use tokio::{
 pub trait IServerEvent: Default + Send + Sync + Clone + 'static {
     type U: Sync + Send + Default;
 
-    /// connection's error event
+    /// 会话端错误事件
     ///
-    /// # Trigger
+    /// # 触发
     ///
-    /// after connection error.
+    /// 在会话端会读写出现错误时触发.
     async fn on_error(&self, conn: &ConnPtr<Self::U>, err: g::Err) {
         tracing::error!("[{} - {:?}] => {err}", conn.sockfd, conn.remote);
     }
 
+    /// 会话端连接成功事件
+    ///
+    /// # 触发
+    ///
+    /// 在会话端连接连接成功后触发.
     async fn on_connected(&self, conn: &ConnPtr<Self::U>) -> g::Result<()> {
         tracing::debug!("[{} - {:?}] has connected", conn.sockfd, conn.remote);
         Ok(())
     }
 
-    /// connection's disconnected event
+    /// 会话端连接断开事件
     ///
-    /// # Trigger
+    /// # 触发
     ///
-    /// after connection has disconnected.
+    /// 在会话端连接断开后触发.
     async fn on_disconnected(&self, conn: &ConnPtr<Self::U>) {
         tracing::debug!("[{} - {:?}] has disconnected", conn.sockfd, conn.remote);
     }
 
-    /// connection's has package received needs to be process.
+    /// 会话端消息事件
     ///
-    /// # Trigger
+    /// # 触发
     ///
-    /// after connection receive a complete package.
+    /// 在会话端成功解析消息后触发.
     async fn on_process(
         &self,
         conn: &ConnPtr<Self::U>,
         req: &pack::Package,
-    ) -> g::Result<Option<pack::Response>>;
+    ) -> g::Result<Option<pack::PackBuf>>;
 
-    /// server start event
+    /// 服务端运行事件
     ///
-    /// # Trigger
+    /// # 触发
     ///
-    /// before server start listening.
+    /// 在服务端开启监听之前触发.
     async fn on_running(&self, server: &Arc<Server<Self>>) {
         tracing::debug!(
             "server[ HOST:({}) | MAX:({}) | TIMOUT:({}) ] is running...",
@@ -100,11 +105,11 @@ pub trait IServerEvent: Default + Send + Sync + Clone + 'static {
         );
     }
 
-    /// server stop event
+    /// 服务端停止事件
     ///
-    /// # Trigger
+    /// # 触发
     ///
-    /// after server has stopped listen.
+    /// 在服务端退出监听轮循后触发.
     async fn on_stopped(&self, server: &Arc<Server<Self>>) {
         tracing::debug!("server[ HOST:({}) ] has stopped...!!!", server.host);
     }
@@ -115,68 +120,33 @@ pub trait IServerEvent: Default + Send + Sync + Clone + 'static {
 //
 /// # Server<T>
 ///
-/// common server option
+/// 服务端属性
 ///
-/// # Generic T
+/// # 泛型: T
 ///
-/// IServerEvent implement.
+/// IServerEvent 接口实现.
 pub struct Server<T> {
     event: T,
-    host: &'static str,
-    max_connections: usize,
-    timeout: u64,
-    running: AtomicBool,
-    limit_connections: Arc<Semaphore>,
-    shutdown_tx: broadcast::Sender<u8>,
+    host: &'static str,                 // 监听地址
+    max_connections: usize,             // 最大连接数
+    timeout: u64,                       // 会话端读超时
+    running: AtomicBool,                // 运行状态
+    limit_connections: Arc<Semaphore>,  // 连接退制信号量
+    shutdown_tx: broadcast::Sender<u8>, // 关闭管道
 }
 
 impl<T: IServerEvent> Server<T> {
-    /// # Server<T>::new_ptr
-    ///
-    /// make a Arc<Self>.
-    ///
-    /// # Params
-    ///
-    /// `host` listen address.
-    ///
-    /// `max_connections` max connections.
-    ///
-    /// `timeout` connection read timeout, unit second(s).
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use tg::nw::Server;
-    /// use async_trait::async_trait;
-    ///
-    /// #[derive(Copy, Clone, Default)]
-    /// struct DemoEvent;
-    ///
-    /// #[async_trait]
-    /// impl tg::nw::IServerEvent for DemoEvent {
-    ///     type U = ();
-    ///
-    ///     async fn on_process(&self, conn: &tg::nw::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::Response>> {
-    ///         println!("{:?} => {:?}", conn.remote(), req.data());
-    ///         Ok(None)
-    ///     }
-    /// }
-    ///
-    /// let server = Server::<DemoEvent>::new_ptr("0.0.0.0:6688", 100, 60);
-    /// assert_eq!(server.max_connections(), 100);
-    /// assert_eq!(server.host(), "0.0.0.0:6688");
-    /// ```
-    pub fn new_ptr(host: &'static str, max_connections: usize, timeout: u64) -> Arc<Self> {
-        Arc::new(Self::new(host, max_connections, timeout))
-    }
-
     /// # Server<T>::new
     ///
-    /// make a Server<T>
+    /// Server<T> 工厂函数
     ///
-    /// # Params
+    /// # 入参
     ///
-    /// same as [Server<T>::new_ptr]
+    /// `host` 监听地址.
+    ///
+    /// `max_connections` 最大连接数.
+    ///
+    /// `timeout` 会话端读超时(单位秒).
     ///
     /// # Example
     ///
@@ -215,37 +185,76 @@ impl<T: IServerEvent> Server<T> {
         }
     }
 
-    /// listen addres
+    /// # Server<T>::new_ptr
+    ///
+    /// 创建 Arc<Server<T>> 实例
+    ///
+    /// # 入参
+    /// 
+    /// 参考 [Server<T>::new]
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use tg::nw::Server;
+    /// use async_trait::async_trait;
+    ///
+    /// #[derive(Copy, Clone, Default)]
+    /// struct DemoEvent;
+    ///
+    /// #[async_trait]
+    /// impl tg::nw::IServerEvent for DemoEvent {
+    ///     type U = ();
+    ///
+    ///     async fn on_process(&self, conn: &tg::nw::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::Response>> {
+    ///         println!("{:?} => {:?}", conn.remote(), req.data());
+    ///         Ok(None)
+    ///     }
+    /// }
+    ///
+    /// let server = Server::<DemoEvent>::new_ptr("0.0.0.0:6688", 100, 60);
+    /// assert_eq!(server.max_connections(), 100);
+    /// assert_eq!(server.host(), "0.0.0.0:6688");
+    /// ```
+    pub fn new_ptr(host: &'static str, max_connections: usize, timeout: u64) -> Arc<Self> {
+        Arc::new(Self::new(host, max_connections, timeout))
+    }
+
+    /// 监听地址
     #[inline]
     pub fn host(&self) -> &'static str {
         self.host
     }
 
-    /// max connections
+    /// 最大连接数
     #[inline]
     pub fn max_connections(&self) -> usize {
         self.max_connections
     }
 
-    /// current connections
+    /// 当前连接数
+    /// 
+    /// # Notes
+    /// 
+    /// 当前连接数并不准确, 仅作参考
     #[inline]
     pub fn current_connections(&self) -> usize {
         self.max_connections - self.limit_connections.available_permits()
     }
 
-    /// connection's read timeout
+    /// 读超时
     #[inline]
     pub fn timeout(&self) -> u64 {
         self.timeout
     }
 
-    /// server's state, if returns true means server is running. false means server is not running.
+    /// 判断服务端是否处于监听(运行)状态.
     #[inline]
     pub fn running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// shutdown server
+    /// 关闭服务监听
     #[inline]
     pub fn shutdown(&self) {
         debug_assert!(self.running());
@@ -254,7 +263,7 @@ impl<T: IServerEvent> Server<T> {
         }
     }
 
-    /// wait for server release
+    /// 等待服务端关闭
     pub async fn wait(&self) {
         while self.max_connections > self.limit_connections.available_permits() || self.running() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -266,27 +275,30 @@ impl<T: IServerEvent> Server<T> {
 //
 //
 /// # ConnPtr<T>
+/// 
+/// 会话端指针
 pub type ConnPtr<T> = Arc<LinearReusable<'static, Conn<T>>>;
+pub type ConnPool<T> = LinearObjectPool<Conn<T>>;
 
 /// # Conn<U>
 ///
-/// network connections
+/// 网络交互中的会话端
 ///
-/// # Generic U
+/// # 泛型: U
 ///
-/// User custome data.
+/// 用户自定义类型
 pub struct Conn<U: Default + Send + Sync> {
     #[cfg(unix)]
     sockfd: i32, // unix raw socket
     #[cfg(windows)]
     sockfd: RawSocket, // windows raw socket
-    idempotent: u32, // current idempotent
+    idempotent: u32, // 当前幂等, 用来确认消息是否过期
     send_seq: u32,
     recv_seq: u32,
     remote: SocketAddr,
     local: SocketAddr,
-    wbuf_sender: broadcast::Sender<pack::Response>, // write channel
-    shutdown_sender: broadcast::Sender<u8>,         // shutdown channel
+    wbuf_sender: broadcast::Sender<pack::PackBuf>, // socket 发送管道
+    shutdown_sender: broadcast::Sender<u8>,         // 会话关闭管道
     rbuf: BytesMut,                                 // read buffer
     user_data: Option<U>,                           // user data
 }
@@ -294,11 +306,9 @@ pub struct Conn<U: Default + Send + Sync> {
 impl<U: Default + Send + Sync> Conn<U> {
     /// # Conn<U>::new
     ///
-    /// make a default `Conn`
-    ///
-    /// this methods for internal use.
+    /// 创建默认的会话端实例, 该函数由框架内部调用, 用于 对象池的初始化
     fn new() -> Self {
-        let (wch_sender, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
+        let (wbuf_sender, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
         let (shutdown_sender, _) = broadcast::channel(1);
         Self {
             sockfd: 0,
@@ -307,7 +317,7 @@ impl<U: Default + Send + Sync> Conn<U> {
             recv_seq: 0,
             remote: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
             local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
-            wbuf_sender: wch_sender,
+            wbuf_sender,
             shutdown_sender,
             rbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
             user_data: None,
@@ -315,9 +325,10 @@ impl<U: Default + Send + Sync> Conn<U> {
     }
 
     /// # Conn<U>::pool
-    /// make Conn<U> object pool
+    /// 
+    /// 创建 Conn<U> 对象池
     ///
-    /// @PS: RUST not support static variable with generic paramemters
+    /// @PS: RUST 不支持静态变量代有泛型参数
     ///
     ///    * static POOL<T>: LinearObjectPool<Conn<T>> = LinearObjectPool::new(...);
     ///
@@ -327,7 +338,7 @@ impl<U: Default + Send + Sync> Conn<U> {
     ///
     /// ```
     /// lazy_static::lazy_static! {
-    ///     static ref CONN_POOL: lockfree_object_pool::LinearObjectPool<tg::nw::Conn<()>> = tg::nw::Conn::<()>::pool();
+    ///     static ref CONN_POOL: tg::nw::ConnPool<()> = tg::nw::Conn::<()>::pool();
     /// }
     /// ```
     pub fn pool() -> LinearObjectPool<Self> {
@@ -339,14 +350,24 @@ impl<U: Default + Send + Sync> Conn<U> {
         )
     }
 
-    /// Conn active by TcpStream
-    pub fn acitve(
+    /// # Conn<U>.acitve
+    /// 
+    /// 激活会话端
+    /// 
+    /// # Returns
+    /// 
+    /// (`wbuf_tx`: io发送管道 sender, `wbuf_rx`: io发送管道 receiver, `shutdown_rx`: 会话关闭管道 receiver)
+    /// 
+    /// # Notes
+    /// 
+    /// 当会话端从对象池中被取出来时, 处于未激活状态, 未激活的会话端不能正常使用.
+    fn acitve(
         &mut self,
         stream: &TcpStream,
     ) -> (
-        broadcast::Sender<pack::Response>,
-        broadcast::Receiver<pack::Response>,
-        broadcast::Receiver<u8>,
+        broadcast::Sender<pack::PackBuf>,   // io发送管道 sender
+        broadcast::Receiver<pack::PackBuf>, // io发送管道 receiver
+        broadcast::Receiver<u8>,             // 会话关闭管道 receiver
     ) {
         stream.set_nodelay(true).unwrap();
 
@@ -370,7 +391,9 @@ impl<U: Default + Send + Sync> Conn<U> {
         )
     }
 
-    /// reset Conn<U>
+    /// # Conn<U>.reset
+    ///
+    /// 重置会话端, 使其处于未激活状态
     #[inline]
     fn reset(&mut self) {
         self.sockfd = 0;
@@ -379,16 +402,12 @@ impl<U: Default + Send + Sync> Conn<U> {
         self.recv_seq = 0;
         self.user_data = None;
         self.rbuf.resize(g::DEFAULT_BUF_SIZE, 0);
-        unsafe {
-            self.rbuf.set_len(0);
-        }
+        unsafe { self.rbuf.set_len(0); }
     }
 
-    /// check read buffer.
+    /// # Conn<U>.check_rbuf
     ///
-    /// if read buffer size is less than pack::Package::HEAD_SIZE, resize to g::DEFAULT_BUF_SIZE.
-    ///
-    /// for internal to use.
+    /// 检查读缓冲区, 当读缓冲区大小不够消息头长度时, 得置为默认长度
     #[inline]
     fn check_rbuf(&self) {
         let n = self.rbuf.len();
@@ -401,88 +420,90 @@ impl<U: Default + Send + Sync> Conn<U> {
         }
     }
 
-    /// get raw socket
+    /// 获取原始套接字
     #[inline]
     #[cfg(unix)]
     pub fn sockfd(&self) -> i32 {
         self.sockfd
     }
 
-    /// get raw socket
+    /// 获取原始套接字
     #[inline]
     #[cfg(windows)]
     pub fn sockfd(&self) -> RawSocket {
         self.sockfd
     }
 
-    /// get remote address
+    /// 获取对端地址
     #[inline]
     pub fn remote(&self) -> &SocketAddr {
         &self.remote
     }
 
-    /// get local address
+    /// 获取本端地址
     #[inline]
     pub fn local(&self) -> &SocketAddr {
         &self.local
     }
 
-    /// close the Conn<U>'s conenction
+    /// 关闭会话端
     #[inline]
     pub fn shutdown(&self) {
         debug_assert!(self.sockfd > 0);
         self.shutdown_sender.send(1).unwrap();
     }
 
-    /// get connection's read buffer as mutable.
+    /// 获取读缓冲区
     #[inline]
     fn rbuf_mut(&self) -> &mut BytesMut {
         unsafe { &mut *(&self.rbuf as *const BytesMut as *mut BytesMut) }
     }
 
-    /// get recv seqenece.
+    /// 获取接收序列
     #[inline]
     pub fn recv_seq(&self) -> u32 {
         self.recv_seq
     }
 
+    /// 接收序列递增
     #[inline]
-    pub fn recv_seq_incr(&self) {
+    fn recv_seq_incr(&self) {
         unsafe {
             let p = &self.recv_seq as *const u32 as *mut u32;
             *p += 1;
         }
     }
 
-    /// get send seqenece.
+    /// 获取发送序列
     #[inline]
     pub fn send_seq(&self) -> u32 {
         self.send_seq
     }
 
+    // 发送序列递增
     #[inline]
-    pub fn send_seq_incr(&self) {
+    fn send_seq_incr(&self) {
         unsafe {
             let p = &self.send_seq as *const u32 as *mut u32;
             *p += 1;
         }
     }
 
-    /// set user data
+    /// 设置用户自定义数据
     #[inline]
     pub fn set_user_data(&mut self, user_data: U) {
         self.user_data = Some(user_data)
     }
 
-    /// get user data
+    /// 获取用户自定义数据
     #[inline]
     pub fn user_data(&self) -> Option<&U> {
         self.user_data.as_ref()
     }
 
-    /// send response to remote.
+    /// 发送消息
     #[inline]
-    pub fn send(&self, data: pack::Response) -> g::Result<()> {
+    pub fn send(&self, data: pack::PackBuf) -> g::Result<()> {
         if self.sockfd == 0 {
             return Err(g::Err::ConnInvalid);
         }
@@ -497,28 +518,47 @@ impl<U: Default + Send + Sync> Conn<U> {
     }
 }
 
+// ---------------------------------------------- IClientEvent ----------------------------------------------
+//
+//
+/// # IClientEvent
+/// 
+/// 客户端网络事件
 #[async_trait]
 pub trait IClientEvent: Sync + Clone + Default + 'static {
+    // 用户自定义数据
     type U: Default + Send + Sync;
 
+    /// # on_connected
+    /// 
+    /// 客户端连接成功事件, 当成功与服务端连接后触发.
     async fn on_connected(&self, cli: &Client<Self::U>) -> g::Result<()> {
         tracing::debug!("{:?} => {:?} has connected", cli.local, cli.remote);
         Ok(())
     }
 
+    /// # on_disconnected
+    /// 
+    /// 客户端断开连接事件, 当客户端与服务端连接断开后触发.
     fn on_disconnected(&self, cli: &Client<Self::U>) {
         tracing::debug!("{:?} => {:?} has disconnected", cli.local, cli.remote);
     }
 
+    /// # on_error
+    /// 
+    /// 客户端错误事件, 当客户端产生读写错误后触发.
     async fn on_error(&self, cli: &Client<Self::U>, err: g::Err) {
         tracing::error!("{:?} => {:?}", cli.local, err);
     }
 
+    /// # on_process
+    /// 
+    /// 客户端消息事件, 当客户端成功解析消息包后触发.
     async fn on_process(
         &self,
         cli: &Client<Self::U>,
         req: &pack::Package,
-    ) -> g::Result<Option<pack::Response>>;
+    ) -> g::Result<Option<pack::PackBuf>>;
 }
 
 // ---------------------------------------------- Client<T> ----------------------------------------------
@@ -536,16 +576,16 @@ pub struct Client<U: Default + Send + Sync> {
     remote: SocketAddr,
     local: SocketAddr,
     rbuf: BytesMut,
-    wbuf_consumer: async_channel::Receiver<pack::Response>,
+    wbuf_consumer: async_channel::Receiver<pack::PackBuf>,
     shutdown_rx: broadcast::Receiver<u8>,
-    wbuf_tx: broadcast::Sender<pack::Response>,
+    wbuf_tx: broadcast::Sender<pack::PackBuf>,
     user_data: Option<U>,
 }
 
 impl<U: Default + Send + Sync> Client<U> {
     pub fn new(
         timeout: u64,
-        wbuf_consumer: async_channel::Receiver<pack::Response>,
+        wbuf_consumer: async_channel::Receiver<pack::PackBuf>,
         shutdown_rx: broadcast::Receiver<u8>,
         user_data: Option<U>,
     ) -> Self {
@@ -634,7 +674,7 @@ impl<U: Default + Send + Sync> Client<U> {
     }
 
     #[inline]
-    fn suit(&self) -> (broadcast::Receiver<u8>, async_channel::Receiver<pack::Response>, broadcast::Sender<pack::Response>, broadcast::Receiver<pack::Response>) {
+    fn suit(&self) -> (broadcast::Receiver<u8>, async_channel::Receiver<pack::PackBuf>, broadcast::Sender<pack::PackBuf>, broadcast::Receiver<pack::PackBuf>) {
         (self.shutdown_rx.resubscribe(), self.wbuf_consumer.clone(), self.wbuf_tx.clone(), self.wbuf_tx.subscribe())
     }
 
@@ -644,7 +684,7 @@ impl<U: Default + Send + Sync> Client<U> {
     }
 
     #[inline]
-    pub fn send(&self, wbuf: pack::Response) {
+    pub fn send(&self, wbuf: pack::PackBuf) {
         if let Err(_) = self.wbuf_tx.send(wbuf) {
             tracing::debug!("wbuf_tx.send failed");
         }

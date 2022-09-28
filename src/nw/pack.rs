@@ -66,7 +66,7 @@ lazy_static! {
 /// # Response
 ///
 /// network's event process reply to connection data
-pub type Response = Arc<LinearReusable<'static, BytesMut>>;
+pub type PackBuf = Arc<LinearReusable<'static, BytesMut>>;
 
 // ---------------------------------------------- pack::Package ----------------------------------------------
 //
