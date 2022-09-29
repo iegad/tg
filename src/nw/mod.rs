@@ -42,7 +42,7 @@ use tokio::{
 ///     // make IServerEvent::U => ().
 ///     type U = ();
 ///
-///     async fn on_process(&self, conn: &tg::nw::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::Response>> {
+///     async fn on_process(&self, conn: &tg::nw::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::PackBuf>> {
 ///         println!("{:?} => {:?}", conn.remote(), req.data());
 ///         Ok(None)
 ///     }
@@ -161,7 +161,7 @@ impl<T: IServerEvent> Server<T> {
     /// impl tg::nw::IServerEvent for DemoEvent {
     ///     type U = ();
     ///
-    ///     async fn on_process(&self, conn: &tg::nw::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::Response>> {
+    ///     async fn on_process(&self, conn: &tg::nw::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::PackBuf>> {
     ///         println!("{:?} => {:?}", conn.remote(), req.data());
     ///         Ok(None)
     ///     }
@@ -206,7 +206,7 @@ impl<T: IServerEvent> Server<T> {
     /// impl tg::nw::IServerEvent for DemoEvent {
     ///     type U = ();
     ///
-    ///     async fn on_process(&self, conn: &tg::nw::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::Response>> {
+    ///     async fn on_process(&self, conn: &tg::nw::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::PackBuf>> {
     ///         println!("{:?} => {:?}", conn.remote(), req.data());
     ///         Ok(None)
     ///     }
@@ -350,7 +350,7 @@ impl<U: Default + Send + Sync> Conn<U> {
         )
     }
 
-    /// # Conn<U>.acitve
+    /// # Conn<U>.setup
     /// 
     /// 激活会话端
     /// 
@@ -361,13 +361,13 @@ impl<U: Default + Send + Sync> Conn<U> {
     /// # Notes
     /// 
     /// 当会话端从对象池中被取出来时, 处于未激活状态, 未激活的会话端不能正常使用.
-    fn acitve(
+    fn setup(
         &mut self,
         stream: &TcpStream,
     ) -> (
         broadcast::Sender<pack::PackBuf>,   // io发送管道 sender
         broadcast::Receiver<pack::PackBuf>, // io发送管道 receiver
-        broadcast::Receiver<u8>,             // 会话关闭管道 receiver
+        broadcast::Receiver<u8>,            // 会话关闭管道 receiver
     ) {
         stream.set_nodelay(true).unwrap();
 
@@ -566,24 +566,37 @@ pub trait IClientEvent: Sync + Clone + Default + 'static {
 //
 pub struct Client<U: Default + Send + Sync> {
     #[cfg(unix)]
-    sockfd: i32,
+    sockfd: i32, // 原始套接字
     recv_seq: u32,
     send_seq: u32,
     idempotent: u32,
     #[cfg(windows)]
-    sockfd: u64,
-    timeout: u64,
+    sockfd: u64, // 原始套接字
+    timeout: u64, // 读超时
     remote: SocketAddr,
-    local: SocketAddr,
-    rbuf: BytesMut,
-    wbuf_consumer: async_channel::Receiver<pack::PackBuf>,
-    shutdown_rx: broadcast::Receiver<u8>,
-    wbuf_tx: broadcast::Sender<pack::PackBuf>,
-    user_data: Option<U>,
+    local: SocketAddr, 
+    rbuf: BytesMut, // 读缓冲区
+    wbuf_consumer: async_channel::Receiver<pack::PackBuf>, // 消费者写管道, 多个Client会抢占从该管道获取需要发送的消息, 达到负载均衡的目的
+    shutdown_rx: broadcast::Receiver<u8>, // 客户端关闭管道
+    wbuf_tx: broadcast::Sender<pack::PackBuf>, // io 发送管道
+    user_data: Option<U>, // 用户数据
 }
 
 impl<U: Default + Send + Sync> Client<U> {
-    pub fn new(
+    /// # Client<U>::new
+    /// 
+    /// 创建新的 Client<U> 对象
+    /// 
+    /// # 入参
+    /// 
+    /// `timeout` 读超时
+    /// 
+    /// `wbuf_consumer` 消费者写管道
+    /// 
+    /// `shutdown_rx` 客户端关闭管道
+    /// 
+    /// `user_data` 用户数据
+    fn new(
         timeout: u64,
         wbuf_consumer: async_channel::Receiver<pack::PackBuf>,
         shutdown_rx: broadcast::Receiver<u8>,
@@ -607,49 +620,111 @@ impl<U: Default + Send + Sync> Client<U> {
         }
     }
 
-    #[inline]
+    /// # Client<U>::new
+    /// 
+    /// 创建新的 Client<U> 对象
+    /// 
+    /// # 入参
+    /// 
+    /// `timeout` 读超时
+    /// 
+    /// `wbuf_consumer` 消费者写管道
+    /// 
+    /// `shutdown_rx` 客户端关闭管道
+    /// 
+    /// `user_data` 用户数据
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// #[derive(Default, Clone, Copy)]
+    /// struct DemoEvent;
+    /// 
+    /// #[async_trait::async_trait]
+    /// impl tg::nw::IClientEvent for DemoEvent {
+    ///     type U = ();
+    /// 
+    ///     async fn on_process(
+    ///         &self,
+    ///         cli: &tg::nw::Client<()>,
+    ///         req: &tg::nw::pack::Package,
+    ///     ) -> tg::g::Result<Option<tg::nw::pack::PackBuf>> {
+    ///         tracing::debug!(
+    ///             "from server[{:?}]: {} => {}",
+    ///             cli.local(),
+    ///             std::str::from_utf8(req.data()).unwrap(),
+    ///             req.idempotent(),
+    ///         );
+    /// 
+    ///         Ok(None)
+    ///     }
+    /// }
+    /// 
+    /// let (shutdown, _) = tokio::sync::broadcast::channel(1);
+    /// let (producer, consumer) = async_channel::bounded(tg::g::DEFAULT_CHAN_SIZE);
+    /// let cli = tg::nw::Client::<()>::new_arc(0, consumer, shutdown.subscribe(), None);
+    /// // ...
+    /// ```
+    pub fn new_arc(        
+        timeout: u64,
+        wbuf_consumer: async_channel::Receiver<pack::PackBuf>,
+        shutdown_rx: broadcast::Receiver<u8>,
+        user_data: Option<U>,
+    ) -> Arc<Self> {
+        Arc::new(Self::new(timeout, wbuf_consumer, shutdown_rx, user_data))
+    }
+
     #[cfg(unix)]
+    /// 获取原始套接字
+    #[inline]
     pub fn sockfd(&self) -> i32 {
         self.sockfd
     }
 
-    #[inline]
     #[cfg(windows)]
+    /// 获取原始套接字
+    #[inline]
     pub fn sockfd(&self) -> u64 {
         self.sockfd
     }
 
+    /// 获取接收序列
     #[inline]
     pub fn recv_seq(&self) -> u32 {
         self.recv_seq
     }
 
+    /// 接收序列递增
     #[inline]
-    pub fn recv_seq_incr(&self) {
+    fn recv_seq_incr(&self) {
         unsafe {
             let p = &self.recv_seq as *const u32 as *mut u32;
             *p += 1;
         }
     }
 
+    /// 获取发送序列
     #[inline]
     pub fn send_seq(&self) -> u32 {
         self.send_seq
     }
 
+    /// 发送序列递增
     #[inline]
-    pub fn send_seq_incr(&self) {
+    fn send_seq_incr(&self) {
         unsafe {
             let p = &self.send_seq as *const u32 as *mut u32;
             *p += 1;
         }
     }
 
+    /// 获取幂等
     #[inline]
     pub fn idempotent(&self) -> u32 {
         self.idempotent
     }
 
+    /// 设置幂等
     #[inline]
     fn set_idempotent(&self, idempotent: u32) {
         unsafe {
@@ -658,31 +733,49 @@ impl<U: Default + Send + Sync> Client<U> {
         }
     }
 
+    /// 获取超时
     #[inline]
     pub fn timeout(&self) -> u64 {
         self.timeout
     }
 
+    /// 获取对端地址
     #[inline]
     pub fn remote(&self) -> &SocketAddr {
         &self.remote
     }
 
+    /// 获取本端地址
     #[inline]
     pub fn local(&self) -> &SocketAddr {
         &self.local
     }
 
+    /// 装载
+    /// 
+    /// 获取Client 的有效操作管道
+    /// 
+    /// # Returns
+    /// 
+    /// 1, 关闭管道 receiver
+    /// 
+    /// 2, 消息者管道 receiver
+    /// 
+    /// 3, io 管道 sender
+    /// 
+    /// 4, io 管道 receiver
     #[inline]
-    fn suit(&self) -> (broadcast::Receiver<u8>, async_channel::Receiver<pack::PackBuf>, broadcast::Sender<pack::PackBuf>, broadcast::Receiver<pack::PackBuf>) {
+    fn setup(&self) -> (broadcast::Receiver<u8>, async_channel::Receiver<pack::PackBuf>, broadcast::Sender<pack::PackBuf>, broadcast::Receiver<pack::PackBuf>) {
         (self.shutdown_rx.resubscribe(), self.wbuf_consumer.clone(), self.wbuf_tx.clone(), self.wbuf_tx.subscribe())
     }
 
+    /// 获取用户数据
     #[inline]
     pub fn user_data(&self) -> Option<&U> {
         self.user_data.as_ref()
     }
 
+    /// 发消息给对端
     #[inline]
     pub fn send(&self, wbuf: pack::PackBuf) {
         if let Err(_) = self.wbuf_tx.send(wbuf) {
@@ -690,16 +783,21 @@ impl<U: Default + Send + Sync> Client<U> {
         }
     }
 
+    /// 获取mutable 读缓冲区
     #[inline]
-    pub fn rbuf_mut(&self) -> &mut BytesMut{
+    fn rbuf_mut(&self) -> &mut BytesMut{
         unsafe{ &mut *(&self.rbuf as *const BytesMut as *mut BytesMut) }
     }
 
+    /// 获取读缓冲区
     #[inline]
-    pub fn rbuf(&self) -> &BytesMut {
+    fn rbuf(&self) -> &BytesMut {
         &self.rbuf
     }
 
+    /// 检查读缓冲区
+    /// 
+    /// 如果缓冲区大小不足以容纳消息头, 则会重新分配一个足够大的缓冲区
     #[inline]
     pub fn check_rbuf(&self) {
         let n = self.rbuf.len();
@@ -719,6 +817,7 @@ impl<U: Default + Send + Sync> Client<U> {
 #[cfg(test)]
 mod nw_test {
     use super::Conn;
+    use super::Client;
 
     #[test]
     fn conn_info() {
@@ -727,6 +826,16 @@ mod nw_test {
             * Conn<()> size: {}\n\
             * --------- Conn INFO END ---------\n",
             std::mem::size_of::<Conn<()>>()
+        );
+    }
+
+    #[test]
+    fn client_info() {
+        println!(
+            "* --------- Client INFO BEGIN ---------\n\
+            * Client<()> size: {}\n\
+            * --------- Client INFO END ---------\n",
+            std::mem::size_of::<Client<()>>()
         );
     }
 }

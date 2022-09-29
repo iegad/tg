@@ -167,10 +167,8 @@ pub const DEFAULT_HOST: &str = "0.0.0.0:8080";
 /// 最大连接数
 pub const DEFAULT_MAX_CONNECTIONS: usize = 1000;
 /// 管道默认长度: 100
-pub const DEFAULT_CHAN_SIZE: usize = 100;
+pub const DEFAULT_CHAN_SIZE: usize = 1000;
 /// 默认读超时值 60秒
 pub const DEFAULT_READ_TIMEOUT: u64 = 60;
 /// 默认读缓冲区大小 8k
-pub const DEFAULT_BUF_SIZE: usize = 1024 * 8;
-/// 包最大长度: 2G
-pub const MAX_PACK_SIZE: usize = i32::MAX as usize + 1;
+pub const DEFAULT_BUF_SIZE: usize = 2048;

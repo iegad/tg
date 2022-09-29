@@ -37,9 +37,7 @@ async fn main() {
     let mut line = String::new();
     let (tx, _) = broadcast::channel(1);
     let (p, c) = async_channel::bounded(g::DEFAULT_CHAN_SIZE);
-
-    let cli = tg::nw::Client::<()>::new(30, c, tx.subscribe(), None);
-    let cli = Arc::new(cli);
+    let cli = tg::nw::Client::<()>::new_arc(30, c, tx.subscribe(), None);
 
     tokio::spawn(async move {
         tg::nw::tcp::client_run::<ChatEvent>("127.0.0.1:6688", cli).await;

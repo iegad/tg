@@ -60,10 +60,10 @@ lazy_static! {
         });
 }
 
-// ---------------------------------------------- pack::Response ----------------------------------------------
+// ---------------------------------------------- pack::PackBuf ----------------------------------------------
 //
 //
-/// # Response
+/// # PackBuf
 ///
 /// network's event process reply to connection data
 pub type PackBuf = Arc<LinearReusable<'static, BytesMut>>;

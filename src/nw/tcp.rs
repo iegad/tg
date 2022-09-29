@@ -139,7 +139,7 @@ async fn conn_handle<T: IServerEvent>(
     permit: OwnedSemaphorePermit,
 ) {
     // step 1: active Conn<U>.
-    let (w_tx, mut w_rx, mut conn_shutdown_rx) = conn_lr.acitve(&stream);
+    let (w_tx, mut w_rx, mut conn_shutdown_rx) = conn_lr.setup(&stream);
     let conn = Arc::new(conn_lr);
 
     // step 2: get socket reader and writer
@@ -189,7 +189,10 @@ async fn conn_handle<T: IServerEvent>(
             // get response from write channel to write to remote.
             result_wbuf = w_rx.recv() => {
                 let wbuf = match result_wbuf {
-                    Err(err) => panic!("wch recv failed: {:?}", err),
+                    Err(err) => {
+                        tracing::error!("wch recv failed: {:?}", err);
+                        continue;
+                    }
                     Ok(v) => v,
                 };
 
@@ -221,8 +224,8 @@ async fn conn_handle<T: IServerEvent>(
 
                         req.reset();
                         if let Some(rsp_bytes) = option_rsp {
-                            if let Err(_) = w_tx.send(rsp_bytes) {
-                                tracing::error!("w_tx.send failed");
+                            if let Err(err) = w_tx.send(rsp_bytes) {
+                                tracing::error!("w_tx.send failed: {err}");
                             }
                         }
                     } else {
@@ -286,7 +289,7 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
     let (mut shutdown_rx, 
         wbuf_consumer, 
         w_tx, 
-        mut w_rx) = cli.suit();
+        mut w_rx) = cli.setup();
     let (mut reader, mut writer) = stream.split();
     let interval = if cli.timeout > 0 {
         cli.timeout
