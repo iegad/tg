@@ -12,7 +12,7 @@ type SockType = i32;
 type SockType = u64;
 
 lazy_static! {
-    pub static ref SERVER: Arc<tg::nw::Server<ChatEvent>> = tg::nw::Server::new_ptr(
+    pub static ref SERVER: Arc<tg::nw::Server<ChatEvent>> = tg::nw::Server::new_arc(
         "0.0.0.0:6688",
         g::DEFAULT_MAX_CONNECTIONS,
         0

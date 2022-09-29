@@ -42,13 +42,8 @@ lazy_static! {
 async fn main() {
     utils::init_log(tracing::Level::DEBUG);
 
-    tracing::debug!(
-        "sizeof Server<EchoEvent> => {} bytes",
-        std::mem::size_of::<tg::nw::Server<EchoEvent>>()
-    );
-
     let controller =
-        tg::nw::Server::<EchoEvent>::new_ptr("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
+        tg::nw::Server::<EchoEvent>::new_arc("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
     let server = controller.clone();
 
     tokio::spawn(async move {

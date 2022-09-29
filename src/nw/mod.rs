@@ -216,7 +216,7 @@ impl<T: IServerEvent> Server<T> {
     /// assert_eq!(server.max_connections(), 100);
     /// assert_eq!(server.host(), "0.0.0.0:6688");
     /// ```
-    pub fn new_ptr(host: &'static str, max_connections: usize, timeout: u64) -> Arc<Self> {
+    pub fn new_arc(host: &'static str, max_connections: usize, timeout: u64) -> Arc<Self> {
         Arc::new(Self::new(host, max_connections, timeout))
     }
 

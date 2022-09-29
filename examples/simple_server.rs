@@ -39,7 +39,7 @@ async fn main() {
     utils::init_log(tracing::Level::DEBUG);
 
     let controller =
-        tg::nw::Server::<SimpleEvent>::new_ptr("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
+        tg::nw::Server::<SimpleEvent>::new_arc("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
     let server = controller.clone();
 
     tokio::spawn(async move {
