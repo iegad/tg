@@ -220,6 +220,11 @@ impl<T: IServerEvent> Server<T> {
         Arc::new(Self::new(host, max_connections, timeout))
     }
 
+    pub fn new_pair(host: &'static str, max_connections: usize, timeout: u64) -> (Arc<Self>, Arc<Self>) {
+        let c = Self::new_arc(host, max_connections, timeout);
+        (c.clone(), c)
+    }
+
     /// 监听地址
     #[inline]
     pub fn host(&self) -> &'static str {

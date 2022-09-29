@@ -38,18 +38,17 @@ lazy_static! {
 async fn main() {
     utils::init_log(tracing::Level::DEBUG);
 
-    let controller =
-        tg::nw::Server::<SimpleEvent>::new_arc("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
-    let server = controller.clone();
+    let (controller, server) =
+        tg::nw::Server::<SimpleEvent>::new_pair("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
 
     tokio::spawn(async move {
         if let Err(err) = tg::nw::tcp::server_run(server, &CONN_POOL).await {
-            println!("{:?}", err);
+            println!("{err}");
         }
     });
 
     match tokio::signal::ctrl_c().await {
-        Err(err) => tracing::error!("SIGINT error: {:?}", err),
+        Err(err) => tracing::error!("SIGINT error: {err}"),
         Ok(()) => controller.shutdown(),
     }
 
