@@ -34,12 +34,7 @@ where
     T: IServerEvent,
     T::U: Default + Sync + Send,
 {
-    // step 1: change server's state to running.
-    if server.running.swap(true, Ordering::SeqCst) {
-        return Err(g::Err::ServerIsAlreadyRunning);
-    }
-
-    // step 2: init tcp listener.
+    // step 1: init tcp listener.
     let lfd = match TcpSocket::new_v4() {
         Err(err) => return Err(g::Err::SocketErr(format!("{err}"))),
         Ok(v) => v,
@@ -65,18 +60,23 @@ where
         Ok(v) => v,
     };
 
+    // step 2: change server's state to running.
+    if server.running.swap(true, Ordering::SeqCst) {
+        return Err(g::Err::ServerIsAlreadyRunning);
+    }
+
     // step 3: get shutdown sender and receiver
-    let shutdown_tx = server.shutdown_tx.clone();
     let mut shutdown_rx = server.shutdown_tx.subscribe();
 
     // step 4: trigge server running event.
     server.event.on_running(&server).await;
 
     // step 5: accept_loop.
+    let timeout = server.timeout;
+
     'accept_loop: loop {
         let event = server.event.clone();
-        let shutdown = shutdown_tx.subscribe();
-        let timeout = server.timeout;
+        let shutdown = shutdown_rx.resubscribe();
         let conn = conn_pool.pull();
 
         select! {
