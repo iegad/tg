@@ -11,7 +11,7 @@ async fn work() {
     for i in 0..10000 {
         let req = tg::nw::pack::Package::with_params(1, 1, 1, i + 1, data);
         let mut wbuf = WBUF_POOL.pull();
-        req.to_bytes(&mut *wbuf);
+        req.to_bytes(&mut wbuf).unwrap();
         if let Err(err) = writer.write_all_buf(&mut *wbuf).await {
             println!("write failed: {:?}", err);
             break;
@@ -23,7 +23,7 @@ async fn work() {
 async fn main() {
     let mut arr = Vec::new();
     let beg = utils::now_unix_micros();
-    for _ in 0..100 {
+    for _ in 0..1 {
         arr.push(tokio::spawn(async move {
             work().await;
         }));

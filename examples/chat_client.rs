@@ -53,7 +53,7 @@ async fn main() {
         req.set_data("Hello world".as_bytes());
 
         let mut wbuf = pack::WBUF_POOL.pull();
-        req.to_bytes(&mut wbuf);
+        req.to_bytes(&mut wbuf).unwrap();
 
         p.send(Arc::new(wbuf)).await.unwrap();
         idempotent += 1;
@@ -80,7 +80,7 @@ async fn main() {
         req.set_data(data.as_bytes());
 
         let mut wbuf = pack::WBUF_POOL.pull();
-        req.to_bytes(&mut wbuf);
+        req.to_bytes(&mut wbuf).unwrap();
 
         p.send(Arc::new(wbuf)).await.unwrap();
 

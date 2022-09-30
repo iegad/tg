@@ -116,7 +116,7 @@ pub enum Err {
     //
     //
     /// 无效的消息头
-    PackHeadInvalid(&'static str),
+    PackHeadInvalid,
 
     /// 真实数据长度超过预期数据长度
     PackDataSizeInvalid,

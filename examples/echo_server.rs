@@ -18,10 +18,11 @@ impl tg::nw::IServerEvent for EchoEvent {
         req: &pack::Package,
     ) -> tg::g::Result<Option<pack::PackBuf>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
-        // tracing::debug!("[{} - {:?}] => {}", conn.sockfd(), conn.remote(), req.idempotent());
-        let mut rsp = WBUF_POOL.pull();
-        req.to_bytes(&mut rsp);
-        Ok(Some(Arc::new(rsp)))
+        let mut rspbuf = WBUF_POOL.pull();
+        tracing::warn!("1: --------->> {}", rspbuf.len());
+        req.to_bytes(&mut rspbuf).unwrap();
+        tracing::warn!("2: --------->> {}", rspbuf.len());
+        Ok(Some(Arc::new(rspbuf)))
     }
 
     async fn on_disconnected(&self, conn: &tg::nw::ConnPtr<()>) {

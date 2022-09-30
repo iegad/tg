@@ -1,6 +1,5 @@
 use super::{pack, IServerEvent, Server};
 use crate::g;
-use bytes::BytesMut;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 #[cfg(unix)]
 use std::os::unix::prelude::AsRawFd;
@@ -204,18 +203,20 @@ async fn conn_handle<T: IServerEvent>(
             }
 
             // connection read data.
-            result_read = reader.read_buf(conn.rbuf_mut()) => {
-                match result_read {
+            result_read = reader.read(conn.rbuf_mut()) => {
+                let nread = match result_read {
                     Err(err) => {
                         event.on_error(&conn, g::Err::TcpReadFailed(format!("{err}"))).await;
                         break 'conn_loop;
                     }
                     Ok(0) => break 'conn_loop,
-                    Ok(_) => (),
-                }
+                    Ok(v) => v,
+                };
 
+                let mut consume = 0;
                 'pack_loop: loop {
                     if req.valid() {
+                        tracing::debug!("处理消息.");
                         conn.recv_seq_incr();
                         let option_rsp = match event.on_process(&conn, &req).await {
                             Err(_) => break 'conn_loop,
@@ -229,18 +230,19 @@ async fn conn_handle<T: IServerEvent>(
                             }
                         }
                     } else {
-                        if let Err(err) = pack::Package::parse(conn.rbuf_mut(), &mut req) {
-                            event.on_error(&conn, err).await;
-                            break 'conn_loop;
-                        }
+                        consume += match req.from_bytes(&conn.rbuf()[consume..nread]) {
+                            Err(err) => {
+                                event.on_error(&conn, err).await;
+                                break 'conn_loop;
+                            }
+                            Ok(v) => v,
+                        };
                     }
 
-                    if !req.valid() && conn.rbuf_mut().len() < pack::Package::HEAD_SIZE {
+                    if consume == nread && !req.valid() {
                         break 'pack_loop;
                     }
                 }
-
-                conn.check_rbuf();
             }
         }
     }
@@ -251,7 +253,7 @@ async fn conn_handle<T: IServerEvent>(
 }
 
 
-// ---------------------------------------------- conn handle ----------------------------------------------
+// ---------------------------------------------- client run ----------------------------------------------
 //
 //
 pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<super::Client<T::U>>) {
@@ -346,7 +348,7 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
             }
 
             // read package
-            result_read = reader.read_buf(cli.rbuf_mut()) => {
+            result_read = reader.read(cli.rbuf_mut()) => {
                 match result_read {
                     Err(err) => {
                         event.on_error(&cli, g::Err::TcpReadFailed(format!("{err}"))).await;
@@ -373,7 +375,7 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
                             }
                         }
                     } else {
-                        if let Err(err) = pack::Package::parse(cli.rbuf_mut(), &mut req) {
+                        if let Err(err) = req.from_bytes(cli.rbuf()) {
                             event.on_error(&cli, err).await;
                             break 'cli_loop;
                         }
@@ -383,44 +385,9 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
                         break 'pack_loop;
                     }
                 }
-
-                cli.check_rbuf();
             }
         }
     }
 
     event.on_disconnected(&cli);
-}
-
-// ---------------------------------------------- read package ----------------------------------------------
-//
-//
-/// # read_pack
-///
-/// read pack from buf, this function is good to called by sync io.
-///
-/// # Returns
-///
-/// if has any errors returns error.
-///
-/// if the pack if load complete return true.
-///
-/// return false means the pack is loaded-half.
-///
-/// # Example
-///
-/// see [examles/echo_client.rs]
-#[inline]
-pub fn read_pack(buf: &mut BytesMut, pack: &mut pack::Package) -> g::Result<bool> {
-    loop {
-        if pack.valid() {
-            return Ok(true);
-        }
-
-        if buf.len() < pack::Package::HEAD_SIZE {
-            return Ok(false);
-        }
-
-        pack::Package::parse(buf, pack)?;
-    }
 }

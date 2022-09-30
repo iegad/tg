@@ -4,7 +4,6 @@ pub mod tools;
 
 use crate::g;
 use async_trait::async_trait;
-use bytes::BytesMut;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 #[cfg(unix)]
 use std::os::unix::prelude::AsRawFd;
@@ -303,9 +302,9 @@ pub struct Conn<U: Default + Send + Sync> {
     remote: SocketAddr,
     local: SocketAddr,
     wbuf_sender: broadcast::Sender<pack::PackBuf>, // socket 发送管道
-    shutdown_sender: broadcast::Sender<u8>,         // 会话关闭管道
-    rbuf: BytesMut,                                 // read buffer
-    user_data: Option<U>,                           // user data
+    shutdown_sender: broadcast::Sender<u8>,        // 会话关闭管道
+    rbuf: [u8; g::DEFAULT_BUF_SIZE],               // read buffer
+    user_data: Option<U>,                          // user data
 }
 
 impl<U: Default + Send + Sync> Conn<U> {
@@ -324,7 +323,7 @@ impl<U: Default + Send + Sync> Conn<U> {
             local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
             wbuf_sender,
             shutdown_sender,
-            rbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
+            rbuf: [0u8; g::DEFAULT_BUF_SIZE],
             user_data: None,
         }
     }
@@ -406,23 +405,6 @@ impl<U: Default + Send + Sync> Conn<U> {
         self.send_seq = 0;
         self.recv_seq = 0;
         self.user_data = None;
-        self.rbuf.resize(g::DEFAULT_BUF_SIZE, 0);
-        unsafe { self.rbuf.set_len(0); }
-    }
-
-    /// # Conn<U>.check_rbuf
-    ///
-    /// 检查读缓冲区, 当读缓冲区大小不够消息头长度时, 得置为默认长度
-    #[inline]
-    fn check_rbuf(&self) {
-        let n = self.rbuf.len();
-        if n < pack::Package::HEAD_SIZE {
-            unsafe {
-                let rbuf = &mut *(&self.rbuf as *const BytesMut as *mut BytesMut);
-                rbuf.resize(g::DEFAULT_BUF_SIZE, 0);
-                rbuf.set_len(n)
-            };
-        }
     }
 
     /// 获取原始套接字
@@ -460,8 +442,13 @@ impl<U: Default + Send + Sync> Conn<U> {
 
     /// 获取读缓冲区
     #[inline]
-    fn rbuf_mut(&self) -> &mut BytesMut {
-        unsafe { &mut *(&self.rbuf as *const BytesMut as *mut BytesMut) }
+    fn rbuf_mut(&self) -> &mut [u8] {
+        unsafe { &mut *(&self.rbuf as *const [u8] as *mut [u8]) }
+    }
+
+    #[inline]
+    fn rbuf(&self) -> &[u8] {
+        &self.rbuf
     }
 
     /// 获取接收序列
@@ -580,7 +567,7 @@ pub struct Client<U: Default + Send + Sync> {
     timeout: u64, // 读超时
     remote: SocketAddr,
     local: SocketAddr, 
-    rbuf: BytesMut, // 读缓冲区
+    rbuf: [u8; g::DEFAULT_BUF_SIZE], // 读缓冲区
     wbuf_consumer: async_channel::Receiver<pack::PackBuf>, // 消费者写管道, 多个Client会抢占从该管道获取需要发送的消息, 达到负载均衡的目的
     shutdown_rx: broadcast::Receiver<u8>, // 客户端关闭管道
     wbuf_tx: broadcast::Sender<pack::PackBuf>, // io 发送管道
@@ -617,7 +604,7 @@ impl<U: Default + Send + Sync> Client<U> {
             timeout,
             remote: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
             local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
-            rbuf: BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
+            rbuf: [0u8; g::DEFAULT_BUF_SIZE],
             wbuf_consumer,
             shutdown_rx,
             wbuf_tx,
@@ -790,29 +777,14 @@ impl<U: Default + Send + Sync> Client<U> {
 
     /// 获取mutable 读缓冲区
     #[inline]
-    fn rbuf_mut(&self) -> &mut BytesMut{
-        unsafe{ &mut *(&self.rbuf as *const BytesMut as *mut BytesMut) }
+    fn rbuf_mut(&self) -> &mut [u8] {
+        unsafe{ &mut *(&self.rbuf as *const [u8] as *mut [u8]) }
     }
 
     /// 获取读缓冲区
     #[inline]
-    fn rbuf(&self) -> &BytesMut {
+    fn rbuf(&self) -> &[u8] {
         &self.rbuf
-    }
-
-    /// 检查读缓冲区
-    /// 
-    /// 如果缓冲区大小不足以容纳消息头, 则会重新分配一个足够大的缓冲区
-    #[inline]
-    pub fn check_rbuf(&self) {
-        let n = self.rbuf.len();
-        if n < pack::Package::HEAD_SIZE {
-            unsafe {
-                let rbuf = &mut *(&self.rbuf as *const BytesMut as *mut BytesMut);
-                rbuf.resize(g::DEFAULT_BUF_SIZE, 0);
-                rbuf.set_len(n)
-            };
-        }
     }
 }
 

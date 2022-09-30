@@ -37,7 +37,7 @@ impl tg::nw::IServerEvent for ChatEvent {
         assert_eq!(req.idempotent(), conn.recv_seq());
 
         let mut wbuf = WBUF_POOL.pull();
-        req.to_bytes(&mut wbuf);
+        req.to_bytes(&mut wbuf).unwrap();
         Ok(Some(Arc::new(wbuf)))
     }
 
