@@ -3,7 +3,7 @@ use tg::{g, utils};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    utils::init_log(tracing::Level::DEBUG);
+    utils::init_log();
 
     // tonic_build::compile_protos("src/pb/lisa.proto")?;
 

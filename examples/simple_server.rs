@@ -36,7 +36,7 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() {
-    utils::init_log(tracing::Level::DEBUG);
+    utils::init_log();
 
     let (controller, server) =
         tg::nw::Server::<SimpleEvent>::new_pair("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);

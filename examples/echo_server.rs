@@ -19,14 +19,13 @@ impl tg::nw::IServerEvent for EchoEvent {
     ) -> tg::g::Result<Option<pack::PackBuf>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
         let mut rspbuf = WBUF_POOL.pull();
-        tracing::warn!("1: --------->> {}", rspbuf.len());
+        tracing::debug!("{}", req);
         req.to_bytes(&mut rspbuf).unwrap();
-        tracing::warn!("2: --------->> {}", rspbuf.len());
         Ok(Some(Arc::new(rspbuf)))
     }
 
     async fn on_disconnected(&self, conn: &tg::nw::ConnPtr<()>) {
-        tracing::debug!(
+        tracing::info!(
             "[{} - {:?}] has disconnected: {}",
             conn.sockfd(),
             conn.remote(),
@@ -41,7 +40,7 @@ lazy_static! {
 
 #[tokio::main]
 async fn main() {
-    utils::init_log(tracing::Level::DEBUG);
+    utils::init_log();
 
     let (controller, server) = 
         tg::nw::Server::<EchoEvent>::new_pair("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);

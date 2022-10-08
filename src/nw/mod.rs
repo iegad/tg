@@ -211,7 +211,7 @@ impl<T: IServerEvent> Server<T> {
     ///     }
     /// }
     ///
-    /// let server = Server::<DemoEvent>::new_ptr("0.0.0.0:6688", 100, 60);
+    /// let server = Server::<DemoEvent>::new_arc("0.0.0.0:6688", 100, 60);
     /// assert_eq!(server.max_connections(), 100);
     /// assert_eq!(server.host(), "0.0.0.0:6688");
     /// ```

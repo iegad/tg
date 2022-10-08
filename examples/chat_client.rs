@@ -31,7 +31,7 @@ impl tg::nw::IClientEvent for ChatEvent {
 
 #[tokio::main]
 async fn main() {
-    utils::init_log(tracing::Level::DEBUG);
+    utils::init_log();
 
     let mut reader = BufReader::new(tokio::io::stdin());
     let mut line = String::new();
@@ -47,7 +47,6 @@ async fn main() {
 
     for _ in 0..10000 {
         let mut req = pack::REQ_POOL.pull();
-        req.set_service_id(1);
         req.set_package_id(1);
         req.set_idempotent(idempotent);
         req.set_data("Hello world".as_bytes());
@@ -74,7 +73,6 @@ async fn main() {
         }
 
         let mut req = pack::REQ_POOL.pull();
-        req.set_service_id(1);
         req.set_package_id(1);
         req.set_idempotent(idempotent);
         req.set_data(data.as_bytes());

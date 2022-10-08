@@ -64,7 +64,7 @@ pub fn hex_to_bytes(data: &str) -> g::Result<Vec<u8>> {
     }
 }
 
-pub fn init_log_with_path(lev: tracing::Level, path: &str) {
+pub fn init_log_with_path(path: &str) {
     use tracing_appender::rolling;
     use tracing_subscriber::fmt::writer::MakeWriterExt;
 
@@ -80,6 +80,16 @@ pub fn init_log_with_path(lev: tracing::Level, path: &str) {
     use time::UtcOffset;
     use tracing_subscriber::fmt::time::OffsetTime;
 
+    let lev;
+    #[cfg(debug_assertions)]
+    {
+        lev = tracing::Level::DEBUG;
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        lev = tracing::Level::INFO;
+    }
+
     tracing_subscriber::fmt()
         .with_timer(OffsetTime::new(
             UtcOffset::from_hms(8, 0, 0).unwrap(),
@@ -91,10 +101,21 @@ pub fn init_log_with_path(lev: tracing::Level, path: &str) {
         .init();
 }
 
-pub fn init_log(level: tracing::Level) {
+
+pub fn init_log() {
     use time::macros::format_description;
     use time::UtcOffset;
     use tracing_subscriber::fmt::time::OffsetTime;
+
+    let lev;
+    #[cfg(debug_assertions)]
+    {
+        lev = tracing::Level::DEBUG;
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        lev = tracing::Level::INFO;
+    }
 
     tracing_subscriber::fmt()
         .with_timer(OffsetTime::new(
@@ -103,6 +124,6 @@ pub fn init_log(level: tracing::Level) {
                 "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:6]"
             ),
         ))
-        .with_max_level(level)
+        .with_max_level(lev)
         .init();
 }

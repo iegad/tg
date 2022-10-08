@@ -213,6 +213,8 @@ async fn conn_handle<T: IServerEvent>(
                     Ok(v) => v,
                 };
 
+                tracing::debug!("读取 buf 长度: {}", nread);
+
                 let mut consume = 0;
                 'pack_loop: loop {
                     if req.valid() {

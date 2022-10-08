@@ -9,7 +9,7 @@ async fn work() {
 
     let (_, mut writer) = cli.split();
     for i in 0..10000 {
-        let req = tg::nw::pack::Package::with_params(1, 1, 1, i + 1, data);
+        let req = tg::nw::pack::Package::with_params(1, i + 1, data);
         let mut wbuf = WBUF_POOL.pull();
         req.to_bytes(&mut wbuf).unwrap();
         if let Err(err) = writer.write_all_buf(&mut *wbuf).await {

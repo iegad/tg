@@ -7,7 +7,7 @@ use tg::utils;
 
 #[tokio::main]
 async fn main() {
-    utils::init_log(tracing::Level::DEBUG);
+    utils::init_log();
 
     tracing::debug!("{}", utils::get_pwd().unwrap());
 
