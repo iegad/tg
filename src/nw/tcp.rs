@@ -1,10 +1,6 @@
-use super::{pack, IServerEvent, Server};
+use super::{pack, server::Server, conn::Conn, client::Client};
 use crate::g;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
-#[cfg(unix)]
-use std::os::unix::prelude::AsRawFd;
-#[cfg(windows)]
-use std::os::windows::prelude::AsRawSocket;
 use std::sync::{atomic::Ordering, Arc};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -13,7 +9,7 @@ use tokio::{
     sync::{broadcast, OwnedSemaphorePermit},
 };
 
-// ---------------------------------------------- Server run ----------------------------------------------
+// ---------------------------------------------- server_run ----------------------------------------------
 //
 //
 /// # server_run<T>
@@ -27,10 +23,10 @@ use tokio::{
 /// `conn_pool` Conn<T::U> object pool.
 pub async fn server_run<T>(
     server: Arc<Server<T>>,
-    conn_pool: &'static LinearObjectPool<super::Conn<T::U>>,
+    conn_pool: &'static LinearObjectPool<Conn<T::U>>,
 ) -> g::Result<()>
 where
-    T: IServerEvent,
+    T: super::server::IEvent,
     T::U: Default + Sync + Send,
 {
     // step 1: init tcp listener.
@@ -121,7 +117,7 @@ where
 ///
 /// `stream` [TcpStream]
 ///
-/// `conn_resuable` [LinearReusable<'static, super::Conn<T::U>>]
+/// `conn_resuable` [LinearReusable<'static, Conn<T::U>>]
 ///
 /// `timeout` read timeout
 ///
@@ -129,9 +125,9 @@ where
 ///
 /// `event` IEvent implement.
 ///
-async fn conn_handle<T: IServerEvent>(
+async fn conn_handle<T: super::server::IEvent>(
     mut stream: TcpStream,
-    mut conn_lr: LinearReusable<'static, super::Conn<T::U>>,
+    mut conn_lr: LinearReusable<'static, Conn<T::U>>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
     event: T,
@@ -173,7 +169,7 @@ async fn conn_handle<T: IServerEvent>(
 
             // connection shutdown signal
             _ = conn_shutdown_rx.recv() => {
-                tracing::debug!("[{:05}-{:?}] conn_loop is breaking...", conn.sockfd, conn.remote);
+                tracing::debug!("[{:05}-{:?}] conn_loop is breaking...", conn.sockfd(), conn.remote());
                 break 'conn_loop;
             }
 
@@ -258,7 +254,7 @@ async fn conn_handle<T: IServerEvent>(
 // ---------------------------------------------- client run ----------------------------------------------
 //
 //
-pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<super::Client<T::U>>) {
+pub async fn client_run<T: super::client::IEvent>(host: &'static str, cli: Arc<Client<T::U>>) {
     let event = T::default();
 
     let mut stream = match TcpStream::connect(host).await {
@@ -271,20 +267,6 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
         Ok(v) => v,
     };
 
-    unsafe {
-        let cli = &mut *(cli.as_ref() as *const super::Client<T::U> as *mut super::Client<T::U>);
-        cli.remote = stream.peer_addr().unwrap();
-        cli.local = stream.local_addr().unwrap();
-        #[cfg(windows)]
-        {
-            cli.sockfd = stream.as_raw_socket();
-        }
-        #[cfg(unix)]
-        {
-            cli.sockfd = stream.as_raw_fd();
-        }
-    }
-
     if let Err(_) = event.on_connected(&cli).await {
         return;
     }
@@ -293,10 +275,10 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
     let (mut shutdown_rx, 
         wbuf_consumer, 
         w_tx, 
-        mut w_rx) = cli.setup();
+        mut w_rx) = cli.setup(&mut stream);
     let (mut reader, mut writer) = stream.split();
-    let interval = if cli.timeout > 0 {
-        cli.timeout
+    let interval = if cli.timeout() > 0 {
+        cli.timeout()
     } else {
         60 * 60
     };
@@ -311,7 +293,7 @@ pub async fn client_run<T: super::IClientEvent>(host: &'static str, cli: Arc<sup
 
             // timoeut
             _ = ticker.tick() => {
-                if cli.timeout > 0 {
+                if cli.timeout() > 0 {
                     // TODO: ping
                 }
             }

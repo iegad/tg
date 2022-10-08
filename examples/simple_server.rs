@@ -7,19 +7,19 @@ use tg::{nw::pack, utils};
 struct SimpleEvent;
 
 #[async_trait]
-impl tg::nw::IServerEvent for SimpleEvent {
+impl tg::nw::server::IEvent for SimpleEvent {
     type U = ();
 
     async fn on_process(
         &self,
-        conn: &tg::nw::ConnPtr<()>,
+        conn: &tg::nw::conn::ConnPtr<()>,
         req: &pack::Package,
     ) -> tg::g::Result<Option<pack::PackBuf>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
         Ok(None)
     }
 
-    async fn on_disconnected(&self, conn: &tg::nw::ConnPtr<()>) {
+    async fn on_disconnected(&self, conn: &tg::nw::conn::ConnPtr<()>) {
         tracing::debug!(
             "[{}|{:?}] has disconnected: {}",
             conn.sockfd(),
@@ -31,7 +31,7 @@ impl tg::nw::IServerEvent for SimpleEvent {
 }
 
 lazy_static! {
-    static ref CONN_POOL: LinearObjectPool<tg::nw::Conn<()>> = tg::nw::Conn::<()>::pool();
+    static ref CONN_POOL: LinearObjectPool<tg::nw::conn::Conn<()>> = tg::nw::conn::Conn::<()>::pool();
 }
 
 #[tokio::main]
@@ -39,7 +39,7 @@ async fn main() {
     utils::init_log();
 
     let (controller, server) =
-        tg::nw::Server::<SimpleEvent>::new_pair("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
+        tg::nw::server::Server::<SimpleEvent>::new_pair("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
 
     tokio::spawn(async move {
         if let Err(err) = tg::nw::tcp::server_run(server, &CONN_POOL).await {

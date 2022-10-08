@@ -5,28 +5,28 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tg::{g, nw::pack::WBUF_POOL};
 
-type ConnPtr = tg::nw::ConnPtr<()>;
+type ConnPtr = tg::nw::conn::ConnPtr<()>;
 #[cfg(unix)]
 type SockType = i32;
 #[cfg(windows)]
 type SockType = u64;
 
 lazy_static! {
-    pub static ref SERVER: Arc<tg::nw::Server<ChatEvent>> = tg::nw::Server::new_arc(
+    pub static ref SERVER: Arc<tg::nw::server::Server<ChatEvent>> = tg::nw::server::Server::new_arc(
         "0.0.0.0:6688",
         g::DEFAULT_MAX_CONNECTIONS,
         0
     );
     pub static ref SESSIONS: Arc<Mutex<HashMap<SockType, ConnPtr>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    pub static ref CONN_POOL: LinearObjectPool<tg::nw::Conn<()>> = tg::nw::Conn::pool();
+    pub static ref CONN_POOL: LinearObjectPool<tg::nw::conn::Conn<()>> = tg::nw::conn::Conn::pool();
 }
 
 #[derive(Clone, Default)]
 pub struct ChatEvent;
 
 #[async_trait]
-impl tg::nw::IServerEvent for ChatEvent {
+impl tg::nw::server::IEvent for ChatEvent {
     type U = ();
 
     async fn on_process(

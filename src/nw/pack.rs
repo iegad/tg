@@ -1,9 +1,9 @@
-use std::{sync::Arc, fmt::Display};
 use bytes::{BytesMut, BufMut};
-use type_layout::TypeLayout;
 use crate::g;
 use lazy_static::lazy_static;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
+use std::{sync::Arc, fmt::Display};
+use type_layout::TypeLayout;
 
 lazy_static! {
     pub static ref WBUF_POOL: LinearObjectPool<BytesMut> =
