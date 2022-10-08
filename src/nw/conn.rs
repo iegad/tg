@@ -5,9 +5,7 @@ use std::os::windows::prelude::{AsRawSocket, RawSocket};
 use std::{sync::Arc, net::{SocketAddr, SocketAddrV4, Ipv4Addr}};
 use lockfree_object_pool::{LinearReusable, LinearObjectPool};
 use tokio::{sync::broadcast, net::TcpStream};
-
 use crate::g;
-
 use super::pack;
 
 // ---------------------------------------------- nw::Conn<U> ----------------------------------------------
