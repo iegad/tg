@@ -170,5 +170,5 @@ pub const DEFAULT_MAX_CONNECTIONS: usize = 1000;
 pub const DEFAULT_CHAN_SIZE: usize = 1000;
 /// 默认读超时值 60秒
 pub const DEFAULT_READ_TIMEOUT: u64 = 60;
-/// 默认读缓冲区大小 8k
-pub const DEFAULT_BUF_SIZE: usize = 2048;
+/// 默认读缓冲区大小 1460
+pub const DEFAULT_BUF_SIZE: usize = 1460;
