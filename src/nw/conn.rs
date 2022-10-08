@@ -28,11 +28,11 @@ pub struct Conn<U: Default + Send + Sync> {
     // block
     #[cfg(unix)]
     sockfd: i32, // unix raw socket
-    #[cfg(windows)]
-    sockfd: RawSocket, // windows raw socket
     idempotent: u32, // 当前幂等, 用来确认消息是否过期
     send_seq: u32,
     recv_seq: u32,
+    #[cfg(windows)]
+    sockfd: u64, // windows raw socket
     remote: SocketAddr,
     local: SocketAddr,
     rbuf: [u8; g::DEFAULT_BUF_SIZE],               // read buffer
