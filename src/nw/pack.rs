@@ -45,8 +45,7 @@ impl Package {
         res.set_package_id(package_id);
         res.set_idempotent(idempotent);
         res.set_data(data);
-        res.set_head_code();
-        res.set_data_code();
+        res.active();
         res
     }
 
@@ -111,6 +110,22 @@ impl Package {
         Ok(buf_pos)
     }
 
+    pub fn active(&mut self) {
+        assert!(self.package_id() > 0 && self.idempotent() > 0 && self.raw_len() <= self.raw.len());
+
+        unsafe {
+            let p = self.raw.as_ptr();
+
+            let head_code = p.add(10) as *mut u8;
+            *head_code = self.raw[0] ^ self.raw[9];
+
+            let raw_code = p.add(11) as *mut u8;
+            *raw_code = self.raw[0] ^ self.raw[self.raw_len()-1];
+        }
+
+        self.raw_pos = self.raw_len()
+    }
+
     pub fn valid(&self) -> bool {
         self.package_id() > 0 && self.idempotent() > 0 && self.raw_pos == self.raw_len()
     }
@@ -118,7 +133,6 @@ impl Package {
     pub fn set_package_id(&mut self, package_id: u16) {
         assert!(package_id > 0);
         self.raw[0..2].copy_from_slice(&package_id.to_le_bytes());
-        self.raw_pos += 2;
     }
 
     pub fn package_id(&self) -> u16 {
@@ -128,7 +142,6 @@ impl Package {
     pub fn set_idempotent(&mut self, idempotent: u32) {
         assert!(idempotent > 0);
         self.raw[2..6].copy_from_slice(&idempotent.to_le_bytes());
-        self.raw_pos += 4;
     }
 
     pub fn idempotent(&self) -> u32 {
@@ -139,24 +152,8 @@ impl Package {
         unsafe {*(self.raw.as_ptr().add(10) as *const u8)}
     }
 
-    pub fn set_head_code(&mut self) {
-        unsafe {
-            let head_code = self.raw.as_ptr().add(10) as *mut u8;
-            *head_code = self.raw[0] ^ self.raw[9];
-        }
-        self.raw_pos += 1;
-    }
-
     pub fn data_code(&self) -> u8 {
         unsafe {*(self.raw.as_ptr().add(11) as *const u8)}
-    }
-
-    pub fn set_data_code(&mut self) {
-        unsafe {
-            let raw_code = self.raw.as_ptr().add(11) as *mut u8;
-            *raw_code = self.raw[0] ^ self.raw[self.raw_len()-1];
-        }
-        self.raw_pos += 1;
     }
 
     pub fn raw_len(&self) -> usize {
@@ -174,7 +171,6 @@ impl Package {
         let rawlen = raw_len as u32;
         self.raw[6..10].copy_from_slice(&rawlen.to_le_bytes());
         self.raw[Self::HEAD_SIZE..raw_len].copy_from_slice(data);
-        self.raw_pos += data_len + 4;
     }
 
     pub fn data(&self) -> &[u8] {
@@ -206,8 +202,7 @@ mod test_package {
         p1.set_package_id(1);
         p1.set_idempotent(2);
         p1.set_data(data.as_bytes());
-        p1.set_head_code();
-        p1.set_data_code();
+        p1.active();
 
         assert_eq!(1, p1.package_id());
         assert_eq!(2, p1.idempotent());
