@@ -23,7 +23,7 @@ async fn work() {
 async fn main() {
     let mut arr = Vec::new();
     let beg = utils::now_unix_micros();
-    for _ in 0..1 {
+    for _ in 0..100 {
         arr.push(tokio::spawn(async move {
             work().await;
         }));
