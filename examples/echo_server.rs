@@ -45,16 +45,6 @@ async fn main() {
     let (controller, server) = 
         tg::nw::server::Server::<EchoEvent>::new_pair("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
 
-    tokio::spawn(async move {
-        if let Err(err) = tg::nw::tcp::server_run(server, &CONN_POOL).await {
-            println!("{err}");
-        }
-    });
-
-    match tokio::signal::ctrl_c().await {
-        Err(err) => tracing::error!("SIGINT error: {err}"),
-        Ok(()) => controller.shutdown(),
-    }
-
+    tg::tcp_server_run!(server, controller, &CONN_POOL);
     controller.wait().await;
 }

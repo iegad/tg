@@ -93,7 +93,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     ///
     /// 在服务端退出监听轮循后触发.
     async fn on_stopped(&self, server: &Arc<Server<Self>>) {
-        tracing::debug!("server[ HOST:({}) ] has stopped...!!!", server.host);
+        tracing::debug!("server[ HOST:({}) ] has shutdown", server.host);
     }
 }
 
@@ -258,5 +258,6 @@ impl<T: IEvent> Server<T> {
         while self.max_connections > self.limit_connections.available_permits() || self.running() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
+        tracing::debug!("server has stopped!!!");
     }
 }
