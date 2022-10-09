@@ -67,7 +67,7 @@ pub struct Client<U: Default + Send + Sync> {
     timeout: u64, // 读超时
     remote: SocketAddr,
     local: SocketAddr, 
-    rbuf: [u8; g::DEFAULT_BUF_SIZE], // 读缓冲区
+    rbuf: Vec<u8>, // 读缓冲区
     user_data: Option<U>, // 用户数据
     // controller
     wbuf_consumer: async_channel::Receiver<pack::PackBuf>, // 消费者写管道, 多个Client会抢占从该管道获取需要发送的消息, 达到负载均衡的目的
@@ -105,7 +105,7 @@ impl<U: Default + Send + Sync> Client<U> {
             timeout,
             remote: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
             local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
-            rbuf: [0u8; g::DEFAULT_BUF_SIZE],
+            rbuf: vec![0u8; g::DEFAULT_BUF_SIZE],
             wbuf_consumer,
             shutdown_rx,
             wbuf_tx,
@@ -180,6 +180,7 @@ impl<U: Default + Send + Sync> Client<U> {
     /// 3, io 管道 sender
     /// 
     /// 4, io 管道 receiver
+    #[allow(clippy::cast_ref_to_mut)]
     pub(crate) fn setup(&self, stream: &mut TcpStream) -> (broadcast::Receiver<u8>, async_channel::Receiver<pack::PackBuf>, broadcast::Sender<pack::PackBuf>, broadcast::Receiver<pack::PackBuf>) {
         unsafe {
             let cli = &mut *(self as *const Client<U> as *mut Client<U>);
@@ -200,26 +201,26 @@ impl<U: Default + Send + Sync> Client<U> {
 
     #[cfg(unix)]
     /// 获取原始套接字
-    #[inline]
+    #[inline(always)]
     pub fn sockfd(&self) -> i32 {
         self.sockfd
     }
 
     #[cfg(windows)]
     /// 获取原始套接字
-    #[inline]
+    #[inline(always)]
     pub fn sockfd(&self) -> u64 {
         self.sockfd
     }
 
     /// 获取接收序列
-    #[inline]
+    #[inline(always)]
     pub fn recv_seq(&self) -> u32 {
         self.recv_seq
     }
 
     /// 接收序列递增
-    #[inline]
+    #[inline(always)]
     pub(crate) fn recv_seq_incr(&self) {
         unsafe {
             let p = &self.recv_seq as *const u32 as *mut u32;
@@ -228,13 +229,13 @@ impl<U: Default + Send + Sync> Client<U> {
     }
 
     /// 获取发送序列
-    #[inline]
+    #[inline(always)]
     pub fn send_seq(&self) -> u32 {
         self.send_seq
     }
 
     /// 发送序列递增
-    #[inline]
+    #[inline(always)]
     pub(crate) fn send_seq_incr(&self) {
         unsafe {
             let p = &self.send_seq as *const u32 as *mut u32;
@@ -243,13 +244,13 @@ impl<U: Default + Send + Sync> Client<U> {
     }
 
     /// 获取幂等
-    #[inline]
+    #[inline(always)]
     pub fn idempotent(&self) -> u32 {
         self.idempotent
     }
 
     /// 设置幂等
-    #[inline]
+    #[inline(always)]
     pub(crate) fn set_idempotent(&self, idempotent: u32) {
         unsafe {
             let p = &self.idempotent as *const u32 as *mut u32;
@@ -258,45 +259,47 @@ impl<U: Default + Send + Sync> Client<U> {
     }
 
     /// 获取超时
-    #[inline]
+    #[inline(always)]
     pub fn timeout(&self) -> u64 {
         self.timeout
     }
 
     /// 获取对端地址
-    #[inline]
+    #[inline(always)]
     pub fn remote(&self) -> &SocketAddr {
         &self.remote
     }
 
     /// 获取本端地址
-    #[inline]
+    #[inline(always)]
     pub fn local(&self) -> &SocketAddr {
         &self.local
     }
 
     /// 获取用户数据
-    #[inline]
+    #[inline(always)]
     pub fn user_data(&self) -> Option<&U> {
         self.user_data.as_ref()
     }
 
     /// 发消息给对端
-    #[inline]
+    #[inline(always)]
     pub fn send(&self, wbuf: pack::PackBuf) {
-        if let Err(_) = self.wbuf_tx.send(wbuf) {
+        if self.wbuf_tx.send(wbuf).is_err() {
             tracing::debug!("wbuf_tx.send failed");
         }
     }
 
     /// 获取mutable 读缓冲区
-    #[inline]
+    #[inline(always)]
+    #[allow(clippy::cast_ref_to_mut)]
+    #[allow(clippy::mut_from_ref)]
     pub(crate) fn rbuf_mut(&self) -> &mut [u8] {
-        unsafe{ &mut *(&self.rbuf as *const [u8] as *mut [u8]) }
+        unsafe{ &mut *(self.rbuf.as_ref() as *const [u8] as *mut [u8]) }
     }
 
     /// 获取读缓冲区
-    #[inline]
+    #[inline(always)]
     pub(crate) fn rbuf(&self) -> &[u8] {
         &self.rbuf
     }

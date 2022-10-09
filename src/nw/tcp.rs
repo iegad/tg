@@ -153,7 +153,7 @@ async fn conn_handle<T: super::server::IEvent>(
     let mut req = pack::PACK_POOL.pull();
 
     // step 5: triger connected event.
-    if let Err(_) = event.on_connected(&conn).await {
+    if event.on_connected(&conn).await.is_err() {
         return;
     }
 
@@ -267,7 +267,7 @@ pub async fn client_run<T: super::client::IEvent>(host: &'static str, cli: Arc<C
         Ok(v) => v,
     };
 
-    if let Err(_) = event.on_connected(&cli).await {
+    if event.on_connected(&cli).await.is_err() {
         return;
     }
 
@@ -325,7 +325,7 @@ pub async fn client_run<T: super::client::IEvent>(host: &'static str, cli: Arc<C
                     Ok(v) => v,
                 };
 
-                if let Err(_) = w_tx.send(wbuf) {
+                if w_tx.send(wbuf).is_err() {
                     tracing::error!("w_tx send failed");
                     break 'cli_loop;
                 }
@@ -353,16 +353,14 @@ pub async fn client_run<T: super::client::IEvent>(host: &'static str, cli: Arc<C
                         cli.set_idempotent(req.idempotent());
                         req.reset();
                         if let Some(rsp) = option_rsp {
-                            if let Err(_) = w_tx.send(rsp) {
+                            if w_tx.send(rsp).is_err() {
                                 tracing::error!("w_tx send failed");
                                 break 'cli_loop;
                             }
                         }
-                    } else {
-                        if let Err(err) = req.from_bytes(cli.rbuf()) {
-                            event.on_error(&cli, err).await;
-                            break 'cli_loop;
-                        }
+                    } else if let Err(err) = req.from_bytes(cli.rbuf()) {
+                        event.on_error(&cli, err).await;
+                        break 'cli_loop;
                     }
 
                     if !req.valid() && cli.rbuf().len() < pack::Package::HEAD_SIZE {

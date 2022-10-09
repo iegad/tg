@@ -35,7 +35,7 @@ pub struct Conn<U: Default + Send + Sync> {
     sockfd: u64, // windows raw socket
     remote: SocketAddr,
     local: SocketAddr,
-    rbuf: [u8; g::DEFAULT_BUF_SIZE],               // read buffer
+    rbuf: Vec<u8>,               // read buffer
     user_data: Option<U>,                          // user data
     // contorller
     wbuf_sender: broadcast::Sender<pack::PackBuf>, // socket 发送管道
@@ -58,7 +58,7 @@ impl<U: Default + Send + Sync> Conn<U> {
             local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
             wbuf_sender,
             shutdown_sender,
-            rbuf: [0u8; g::DEFAULT_BUF_SIZE],
+            rbuf: vec![0u8; g::DEFAULT_BUF_SIZE],
             user_data: None,
         }
     }
@@ -143,57 +143,59 @@ impl<U: Default + Send + Sync> Conn<U> {
     }
 
     /// 获取原始套接字
-    #[inline]
     #[cfg(unix)]
+    #[inline(always)]
     pub fn sockfd(&self) -> i32 {
         self.sockfd
     }
 
     /// 获取原始套接字
-    #[inline]
     #[cfg(windows)]
+    #[inline(always)]
     pub fn sockfd(&self) -> RawSocket {
         self.sockfd
     }
 
     /// 获取对端地址
-    #[inline]
+    #[inline(always)]
     pub fn remote(&self) -> &SocketAddr {
         &self.remote
     }
 
     /// 获取本端地址
-    #[inline]
+    #[inline(always)]
     pub fn local(&self) -> &SocketAddr {
         &self.local
     }
 
     /// 关闭会话端
-    #[inline]
+    #[inline(always)]
     pub fn shutdown(&self) {
-        debug_assert!(self.sockfd > 0);
+        assert!(self.sockfd > 0);
         self.shutdown_sender.send(1).unwrap();
     }
 
     /// 获取读缓冲区
-    #[inline]
+    #[inline(always)]
+    #[allow(clippy::cast_ref_to_mut)]
+    #[allow(clippy::mut_from_ref)]
     pub(crate) fn rbuf_mut(&self) -> &mut [u8] {
-        unsafe { &mut *(&self.rbuf as *const [u8] as *mut [u8]) }
+        unsafe { &mut *(self.rbuf.as_ref() as *const [u8] as *mut [u8]) }
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn rbuf(&self) -> &[u8] {
         &self.rbuf
     }
 
     /// 获取接收序列
-    #[inline]
+    #[inline(always)]
     pub fn recv_seq(&self) -> u32 {
         self.recv_seq
     }
 
     /// 接收序列递增
-    #[inline]
+    #[inline(always)]
     pub(crate) fn recv_seq_incr(&self) {
         unsafe {
             let p = &self.recv_seq as *const u32 as *mut u32;
@@ -202,13 +204,13 @@ impl<U: Default + Send + Sync> Conn<U> {
     }
 
     /// 获取发送序列
-    #[inline]
+    #[inline(always)]
     pub fn send_seq(&self) -> u32 {
         self.send_seq
     }
 
     // 发送序列递增
-    #[inline]
+    #[inline(always)]
     pub(crate) fn send_seq_incr(&self) {
         unsafe {
             let p = &self.send_seq as *const u32 as *mut u32;
@@ -217,13 +219,13 @@ impl<U: Default + Send + Sync> Conn<U> {
     }
 
     /// 设置用户自定义数据
-    #[inline]
+    #[inline(always)]
     pub fn set_user_data(&mut self, user_data: U) {
         self.user_data = Some(user_data)
     }
 
     /// 获取用户自定义数据
-    #[inline]
+    #[inline(always)]
     pub fn user_data(&self) -> Option<&U> {
         self.user_data.as_ref()
     }
@@ -235,7 +237,7 @@ impl<U: Default + Send + Sync> Conn<U> {
             return Err(g::Err::ConnInvalid);
         }
 
-        if let Err(_) = self.wbuf_sender.send(data) {
+        if self.wbuf_sender.send(data).is_err() {
             return Err(g::Err::TcpWriteFailed(
                 "wbuf_sender.send failed".to_string(),
             ));

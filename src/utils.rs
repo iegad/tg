@@ -68,7 +68,7 @@ pub fn init_log_with_path(path: &str) {
     use tracing_appender::rolling;
     use tracing_subscriber::fmt::writer::MakeWriterExt;
 
-    assert!(path.len() > 0);
+    assert!(!path.is_empty());
 
     let dfile = rolling::hourly(path, "DEBUG").with_max_level(tracing::Level::DEBUG);
     let wfile = rolling::hourly(path, "WARN").with_max_level(tracing::Level::WARN);

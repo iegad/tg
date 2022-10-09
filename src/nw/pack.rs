@@ -15,8 +15,8 @@ lazy_static! {
             unsafe{ v.set_len(0); }
         });
 
-    pub(crate) static ref PACK_POOL: LinearObjectPool<Package> = LinearObjectPool::new(||Package::new(), |v|v.reset());
-    pub static ref REQ_POOL: LinearObjectPool<Package> = LinearObjectPool::new(||Package::new(), |v|v.reset());
+    pub(crate) static ref PACK_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
+    pub static ref REQ_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
 }
 
 pub type PackBuf = Arc<LinearReusable<'static, BytesMut>>;
@@ -33,7 +33,6 @@ unsafe impl Send for Package{}
 impl Package {
     pub const HEAD_SIZE: usize = 12;
 
-    #[inline]
     pub fn new() -> Self {
         Self { 
             raw: vec![0; g::DEFAULT_BUF_SIZE],
@@ -41,7 +40,6 @@ impl Package {
         }
     }
 
-    #[inline]
     pub fn with_params(package_id: u16, idempotent: u32, data: &[u8]) -> Self {
         let mut res = Self::new();
         res.set_package_id(package_id);
@@ -59,7 +57,8 @@ impl Package {
     #[inline]
     pub fn to_bytes(&self, buf: &mut BytesMut) -> g::Result<()> {
         assert!(self.valid());
-        Ok(buf.put(&self.raw[..self.raw_len()]))
+        buf.put(&self.raw[..self.raw_len()]);
+        Ok(())
     }
 
     pub fn from_bytes(&mut self, buf: &[u8]) -> g::Result<usize> {
@@ -79,10 +78,8 @@ impl Package {
             self.raw_pos += nleft;
             buf_pos += nleft;
 
-            if self.raw_pos == Self::HEAD_SIZE {
-                if self.raw[0] ^ self.raw[9] != self.head_code() {
-                    return Err(g::Err::PackHeadInvalid);
-                }
+            if self.raw_pos == Self::HEAD_SIZE &&  self.raw[0] ^ self.raw[9] != self.head_code() {
+                return Err(g::Err::PackHeadInvalid);
             }
         }
 
@@ -191,6 +188,12 @@ impl Package {
 impl Display for Package {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "[package_id: {}; idempotent: {}; raw_len: {}; data: {:?}]", self.package_id(), self.idempotent(), self.raw_len(), self.data())
+    }
+}
+
+impl Default for Package {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
