@@ -42,7 +42,7 @@ pub struct Conn<U: Default + Send + Sync> {
     shutdown_sender: broadcast::Sender<u8>,        // 会话关闭管道
 }
 
-impl<U: Default + Send + Sync> Conn<U> {
+impl<U: Default + Send + Sync + 'static> Conn<U> {
     /// # Conn<U>::new
     ///
     /// 创建默认的会话端实例, 该函数由框架内部调用, 用于 对象池的初始化
@@ -81,12 +81,7 @@ impl<U: Default + Send + Sync> Conn<U> {
     /// }
     /// ```
     pub fn pool() -> LinearObjectPool<Self> {
-        LinearObjectPool::new(
-            || Self::new(),
-            |v| {
-                v.reset();
-            },
-        )
+        LinearObjectPool::new(Self::new, |v|v.reset())
     }
 
     /// # Conn<U>.setup

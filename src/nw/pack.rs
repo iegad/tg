@@ -49,7 +49,7 @@ impl Package {
         res
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn reset(&mut self) {
         self.raw_pos = 0;
     }
@@ -123,44 +123,44 @@ impl Package {
         self.raw_pos = self.raw_len()
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn valid(&self) -> bool {
         self.package_id() > 0 && self.idempotent() > 0 && self.raw_pos == self.raw_len()
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn set_package_id(&mut self, package_id: u16) {
         assert!(package_id > 0);
         self.raw[0..2].copy_from_slice(&package_id.to_le_bytes());
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn package_id(&self) -> u16 {
         unsafe {*(self.raw.as_ptr() as *const u8 as *const u16)}
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn set_idempotent(&mut self, idempotent: u32) {
         assert!(idempotent > 0);
         self.raw[2..6].copy_from_slice(&idempotent.to_le_bytes());
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn idempotent(&self) -> u32 {
         unsafe {*(self.raw.as_ptr().add(2) as *const u8 as *const u32)}
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn head_code(&self) -> u8 {
         unsafe {*(self.raw.as_ptr().add(10) as *const u8)}
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn data_code(&self) -> u8 {
         unsafe {*(self.raw.as_ptr().add(11) as *const u8)}
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn raw_len(&self) -> usize {
         unsafe {*(self.raw.as_ptr().add(6) as *const u8 as *const u32) as usize}
     }
@@ -179,7 +179,7 @@ impl Package {
         self.raw[Self::HEAD_SIZE..raw_len].copy_from_slice(data);
     }
 
-    #[inline]
+    #[inline(always)]
     pub fn data(&self) -> &[u8] {
         &self.raw[Self::HEAD_SIZE..self.raw_len()]
     }
