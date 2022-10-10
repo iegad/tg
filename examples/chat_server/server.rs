@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use lazy_static::lazy_static;
-use lockfree_object_pool::LinearObjectPool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tg::{g, nw::pack::WBUF_POOL};
@@ -19,7 +18,7 @@ lazy_static! {
     );
     pub static ref SESSIONS: Arc<Mutex<HashMap<SockType, ConnPtr>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    pub static ref CONN_POOL: LinearObjectPool<tg::nw::conn::Conn<()>> = tg::nw::conn::Conn::pool();
+    pub static ref CONN_POOL: tg::nw::conn::ConnPool<()> = tg::nw::conn::Conn::pool();
 }
 
 #[derive(Clone, Default)]

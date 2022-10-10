@@ -2,11 +2,11 @@
 use std::os::unix::prelude::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::prelude::{AsRawSocket, RawSocket};
-use std::{sync::Arc, net::{SocketAddr, SocketAddrV4, Ipv4Addr}};
-use lockfree_object_pool::{LinearReusable, LinearObjectPool};
+use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::{Arc, RwLock}};
 use tokio::{sync::broadcast, net::TcpStream};
 use crate::g;
-use super::pack;
+use super::{pack, RawFd};
+use hashbrown::HashMap;
 
 // ---------------------------------------------- nw::Conn<U> ----------------------------------------------
 //
@@ -14,8 +14,8 @@ use super::pack;
 /// # ConnPtr<T>
 /// 
 /// 会话端指针
-pub type ConnPtr<T> = Arc<LinearReusable<'static, Conn<T>>>;
-pub type ConnPool<T> = LinearObjectPool<Conn<T>>;
+pub type ConnPtr<T> = Arc<Conn<T>>;
+pub type ConnPool<T> = Arc<RwLock<HashMap<RawFd, ConnPtr<T>>>>;
 
 /// # Conn<U>
 ///
@@ -26,13 +26,10 @@ pub type ConnPool<T> = LinearObjectPool<Conn<T>>;
 /// 用户自定义类型
 pub struct Conn<U: Default + Send + Sync> {
     // block
-    #[cfg(unix)]
-    sockfd: i32, // unix raw socket
+    sockfd: RawFd,
     idempotent: u32, // 当前幂等, 用来确认消息是否过期
     send_seq: u32,
     recv_seq: u32,
-    #[cfg(windows)]
-    sockfd: u64, // windows raw socket
     remote: SocketAddr,
     local: SocketAddr,
     rbuf: Vec<u8>,               // read buffer
@@ -63,6 +60,10 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
         }
     }
 
+    pub(crate) fn new_arc() -> Arc<Self> {
+        Arc::new(Self::new())
+    }
+
     /// # Conn<U>::pool
     /// 
     /// 创建 Conn<U> 对象池
@@ -80,8 +81,9 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     ///     static ref CONN_POOL: tg::nw::conn::ConnPool<()> = tg::nw::conn::Conn::<()>::pool();
     /// }
     /// ```
-    pub fn pool() -> LinearObjectPool<Self> {
-        LinearObjectPool::new(Self::new, |v|v.reset())
+    pub fn pool() -> ConnPool<U> {
+        // LinearObjectPool::new(Self::new, |v|v.reset())
+        Arc::new(RwLock::new(HashMap::new()))
     }
 
     /// # Conn<U>.setup
@@ -96,7 +98,7 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     /// 
     /// 当会话端从对象池中被取出来时, 处于未激活状态, 未激活的会话端不能正常使用.
     pub(crate) fn setup(
-        &mut self,
+        &self,
         stream: &TcpStream,
     ) -> (
         broadcast::Sender<pack::PackBuf>,   // io发送管道 sender
@@ -105,18 +107,19 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     ) {
         stream.set_nodelay(true).unwrap();
 
-        #[cfg(unix)]
-        {
-            self.sockfd = stream.as_raw_fd();
+        unsafe {
+            let v = &self.sockfd as *const RawFd as *mut RawFd;
+            #[cfg(unix)]
+            { *v = stream.as_raw_fd(); }
+    
+            #[cfg(windows)]
+            { *v = stream.as_raw_socket(); }
+    
+            let remote = &self.remote as *const SocketAddr as *mut SocketAddr;
+            let local = &self.local as *const SocketAddr as *mut SocketAddr;
+            *remote = stream.peer_addr().unwrap();
+            *local = stream.local_addr().unwrap();
         }
-
-        #[cfg(windows)]
-        {
-            self.sockfd = stream.as_raw_socket();
-        }
-
-        self.remote = stream.peer_addr().unwrap();
-        self.local = stream.local_addr().unwrap();
 
         (
             self.wbuf_sender.clone(),
@@ -129,12 +132,17 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     ///
     /// 重置会话端, 使其处于未激活状态
     #[inline]
-    pub(crate) fn reset(&mut self) {
-        self.sockfd = 0;
-        self.idempotent = 0;
-        self.send_seq = 0;
-        self.recv_seq = 0;
-        self.user_data = None;
+    pub(crate) fn reset(&self) {
+        unsafe {
+            let this = &mut *(self as *const Self as *mut Self);
+
+            this.sockfd = 0;
+            this.idempotent = 0;
+            this.send_seq = 0;
+            this.recv_seq = 0;
+            this.user_data = None;
+        }
+
     }
 
     /// 获取原始套接字
@@ -181,6 +189,11 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     #[inline(always)]
     pub(crate) fn rbuf(&self) -> &[u8] {
         &self.rbuf
+    }
+
+    #[inline(always)]
+    pub fn idempotent(&self) -> u32 {
+        self.idempotent
     }
 
     /// 获取接收序列
@@ -239,5 +252,11 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
         }
 
         Ok(())
+    }
+}
+
+impl<U: Default + Sync + Send> Drop for Conn<U> {
+    fn drop(&mut self) {
+        tracing::warn!("{} has released", self.sockfd);
     }
 }

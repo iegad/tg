@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use lazy_static::lazy_static;
-use lockfree_object_pool::LinearObjectPool;
 use tg::{nw::pack, utils};
 
 #[derive(Clone, Copy, Default)]
@@ -31,7 +30,7 @@ impl tg::nw::server::IEvent for SimpleEvent {
 }
 
 lazy_static! {
-    static ref CONN_POOL: LinearObjectPool<tg::nw::conn::Conn<()>> = tg::nw::conn::Conn::<()>::pool();
+    static ref CONN_POOL: tg::nw::conn::ConnPool<()> = tg::nw::conn::Conn::<()>::pool();
 }
 
 #[tokio::main]

@@ -33,7 +33,6 @@ async fn work() {
                 Err(err) => panic!("{:?}", err),
             };
 
-            // tracing::debug!("读取: {} 节字", nread);
             let mut consume = 0;
             'pack_loop: loop {
                 if rsp.valid() {
@@ -67,8 +66,5 @@ async fn main() {
     }
 
     future::join_all(arr).await;
-    println!(
-        "done....!!!\n 总耗时: {} micro seconds",
-        utils::now_unix_micros() - beg
-    );
+    println!("done....!!!\n 总耗时: {} micro seconds", utils::now_unix_micros() - beg);
 }

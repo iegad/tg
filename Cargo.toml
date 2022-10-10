@@ -13,7 +13,16 @@ edition = "2021"
 name = "chat_server"
 path = "examples/chat_server/main.rs"
 
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "pack_benchmark"
+path = "benchs/pack_benchmark.rs"
+harness = false
+
 [dependencies]
+# criterion = "0.3"
 async-channel = "1.7.1"
 async-trait = "0.1.57"
 axum = "0.5.16"
@@ -32,15 +41,16 @@ tonic = "0.8.1"
 tonic-build = "0.8.0"
 tracing-appender = "0.2.2"
 tracing = "0.1.36"
-tracing-subscriber = { version = "0.3.15", features = ["env-filter","time","local-time"] }
+tracing-subscriber = { version = "0.3.15", features = ["env-filter", "time", "local-time"] }
 type-layout = "0.2.0"
 url = "2.2.2"
+hashbrown = "0.12.3"
 
 [profile.release]
 codegen-units = 1
+opt-level = "s"
+lto = "fat"
+panic = "abort"
 
-
-
-
-
-
+[build]
+rustflags = ["-C target-cpu=native"]

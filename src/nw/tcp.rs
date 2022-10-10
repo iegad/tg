@@ -1,6 +1,9 @@
-use super::{pack, server::Server, conn::Conn, client::Client};
+use super::{pack, server::Server, conn::{Conn, ConnPtr, ConnPool}, client::Client};
 use crate::g;
-use lockfree_object_pool::{LinearObjectPool, LinearReusable};
+#[cfg(unix)]
+use std::os::unix::prelude::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::prelude::{AsRawSocket};
 use std::sync::{atomic::Ordering, Arc};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -23,7 +26,7 @@ use tokio::{
 /// `conn_pool` Conn<T::U> object pool.
 pub async fn server_run<T>(
     server: Arc<Server<T>>,
-    conn_pool: &'static LinearObjectPool<Conn<T::U>>,
+    conn_pool: &'static ConnPool<T::U>,
 ) -> g::Result<()>
 where
     T: super::server::IEvent,
@@ -72,7 +75,6 @@ where
     'accept_loop: loop {
         let event = server.event.clone();
         let shutdown = shutdown_rx.resubscribe();
-        let conn = conn_pool.pull();
 
         select! {
             // when recv shutdown signal.
@@ -89,7 +91,28 @@ where
                 };
 
                 let permit = server.limit_connections.clone().acquire_owned().await.unwrap();
-
+                let cfd;
+                #[cfg(unix)]
+                { cfd = stream.as_raw_fd(); }
+                #[cfg(windows)]
+                { cfd = stream.as_raw_socket(); }
+                let conn = {
+                    let option_c = {
+                        if let Some(v) = conn_pool.read().unwrap().get(&cfd) {
+                            Some(v.clone())
+                        } else {
+                            None
+                        }
+                    };
+                    
+                    if let Some(v) = option_c {
+                        v.clone()
+                    } else {
+                        let c = Conn::new_arc();
+                        { conn_pool.write().unwrap().insert(cfd, c.clone()); }
+                        c
+                    }
+                };
                 tokio::spawn(async move {
                     conn_handle(stream, conn, timeout, shutdown, event, permit).await;
                 });
@@ -127,15 +150,14 @@ where
 ///
 async fn conn_handle<T: super::server::IEvent>(
     mut stream: TcpStream,
-    mut conn_lr: LinearReusable<'static, Conn<T::U>>,
+    conn: ConnPtr<T::U>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
     event: T,
     permit: OwnedSemaphorePermit,
 ) {
     // step 1: active Conn<U>.
-    let (w_tx, mut w_rx, mut conn_shutdown_rx) = conn_lr.setup(&stream);
-    let conn = Arc::new(conn_lr);
+    let (w_tx, mut w_rx, mut conn_shutdown_rx) = conn.setup(&stream);
 
     // step 2: get socket reader and writer
     let (mut reader, mut writer) = stream.split();
@@ -248,6 +270,7 @@ async fn conn_handle<T: super::server::IEvent>(
     // step 7: trigger disconnected event.
     drop(permit);
     event.on_disconnected(&conn).await;
+    conn.reset();
 }
 
 
