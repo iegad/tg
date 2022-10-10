@@ -1,9 +1,5 @@
-use super::{pack, server::Server, conn::{Conn, ConnPtr, ConnPool}, client::Client};
+use super::{pack, server::Server, conn::{ConnPool, ConnItem}, client::Client};
 use crate::g;
-#[cfg(unix)]
-use std::os::unix::prelude::AsRawFd;
-#[cfg(windows)]
-use std::os::windows::prelude::{AsRawSocket};
 use std::sync::{atomic::Ordering, Arc};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -75,6 +71,7 @@ where
     'accept_loop: loop {
         let event = server.event.clone();
         let shutdown = shutdown_rx.resubscribe();
+        let conn_item = conn_pool.pull();
 
         select! {
             // when recv shutdown signal.
@@ -91,30 +88,8 @@ where
                 };
 
                 let permit = server.limit_connections.clone().acquire_owned().await.unwrap();
-                let cfd;
-                #[cfg(unix)]
-                { cfd = stream.as_raw_fd(); }
-                #[cfg(windows)]
-                { cfd = stream.as_raw_socket(); }
-                let conn = {
-                    let option_c = {
-                        if let Some(v) = conn_pool.read().unwrap().get(&cfd) {
-                            Some(v.clone())
-                        } else {
-                            None
-                        }
-                    };
-                    
-                    if let Some(v) = option_c {
-                        v.clone()
-                    } else {
-                        let c = Conn::new_arc();
-                        { conn_pool.write().unwrap().insert(cfd, c.clone()); }
-                        c
-                    }
-                };
                 tokio::spawn(async move {
-                    conn_handle(stream, conn, timeout, shutdown, event, permit).await;
+                    conn_handle(stream, conn_item, timeout, shutdown, event, permit).await;
                 });
             }
         }
@@ -150,7 +125,7 @@ where
 ///
 async fn conn_handle<T: super::server::IEvent>(
     mut stream: TcpStream,
-    conn: ConnPtr<T::U>,
+    conn: ConnItem<T::U>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
     event: T,

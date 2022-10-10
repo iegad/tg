@@ -2,11 +2,11 @@
 use std::os::unix::prelude::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::prelude::{AsRawSocket, RawSocket};
-use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::{Arc, RwLock}};
+use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc};
+use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 use tokio::{sync::broadcast, net::TcpStream};
 use crate::g;
 use super::{pack, RawFd};
-use hashbrown::HashMap;
 
 // ---------------------------------------------- nw::Conn<U> ----------------------------------------------
 //
@@ -15,7 +15,8 @@ use hashbrown::HashMap;
 /// 
 /// 会话端指针
 pub type ConnPtr<T> = Arc<Conn<T>>;
-pub type ConnPool<T> = Arc<RwLock<HashMap<RawFd, ConnPtr<T>>>>;
+pub type ConnItem<T> = LinearReusable<'static, ConnPtr<T>>;
+pub type ConnPool<T> = LinearObjectPool<ConnPtr<T>>;
 
 /// # Conn<U>
 ///
@@ -82,8 +83,7 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     /// }
     /// ```
     pub fn pool() -> ConnPool<U> {
-        // LinearObjectPool::new(Self::new, |v|v.reset())
-        Arc::new(RwLock::new(HashMap::new()))
+        LinearObjectPool::new(Self::new_arc, |v|v.reset())
     }
 
     /// # Conn<U>.setup

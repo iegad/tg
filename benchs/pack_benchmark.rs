@@ -17,7 +17,7 @@ fn pack_pool() {
         p.set_data(data);
         p.active();
 
-        assert!(p.valid())
+        assert!(p.valid());
     } 
 }
 
