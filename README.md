@@ -5,3 +5,4 @@
 后期对 RUST进行深度的学习, 并且在不牺牲功能与性能的情况下提升友好度.
 
 https://nnethercote.github.io/perf-book/inlining.html
+https://blog.logrocket.com/macros-in-rust-a-tutorial-with-examples/

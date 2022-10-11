@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use lazy_static::lazy_static;
 use pack::WBUF_POOL;
 use std::sync::Arc;
 use tg::{nw::pack, utils};
@@ -33,12 +32,8 @@ impl tg::nw::server::IEvent for EchoEvent {
     }
 }
 
-lazy_static! {
-    static ref CONN_POOL: tg::nw::conn::ConnPool<()> = tg::nw::conn::Conn::<()>::pool();
-}
-
 #[tokio::main]
 async fn main() {
     utils::init_log();
-    tg::tcp_server_run!("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT, EchoEvent, &CONN_POOL);
+    tg::tcp_server_run!("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT, EchoEvent);
 }

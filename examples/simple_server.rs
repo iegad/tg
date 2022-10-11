@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use lazy_static::lazy_static;
 use tg::{nw::pack, utils};
 
 #[derive(Clone, Copy, Default)]
@@ -29,12 +28,8 @@ impl tg::nw::server::IEvent for SimpleEvent {
     }
 }
 
-lazy_static! {
-    static ref CONN_POOL: tg::nw::conn::ConnPool<()> = tg::nw::conn::Conn::<()>::pool();
-}
-
 #[tokio::main]
 async fn main() {
     utils::init_log();
-    tg::tcp_server_run!("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT, SimpleEvent, &CONN_POOL);
+    tg::tcp_server_run!("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT, SimpleEvent);
 }
