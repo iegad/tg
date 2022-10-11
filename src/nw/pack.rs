@@ -142,10 +142,8 @@ impl Package {
             buf_pos += nleft;
 
             // 检查 head_code
-            if self.raw_pos == Self::HEAD_SIZE {
-                if self.raw[0] ^ self.raw[9] != self.head_code() || self.package_id() == 0 || self.idempotent() == 0 {
-                    return Err(g::Err::PackHeadInvalid);
-                }
+            if self.raw_pos == Self::HEAD_SIZE && (self.raw[0] ^ self.raw[9] != self.head_code() || self.package_id() == 0 || self.idempotent() == 0) {
+                return Err(g::Err::PackHeadInvalid);
             }
         }
 
@@ -177,7 +175,26 @@ impl Package {
         Ok(buf_pos)
     }
 
-    #[inline]
+    /// check 会将package 包的 head_code 和 raw_code 打上, 并设置raw_pow.
+    /// 
+    /// 如果创建的是一个空 Package, package 在设置了各个字段之后, 是不会打上 head_code和 raw_code, 并且 raw_pos也不会有改变.
+    /// 这将导致该 Package 为无效实例 `this.valid() == false`. 所以在设置完该实例的所有字段之后要调用 check函数, 才能让该实例有效.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// use tg::nw::pack::Package;
+    ///
+    /// let mut p = Package::new();
+    /// p.set_package_id(1);
+    /// p.set_idempotent(2);
+    /// p.set_data("Hello world".as_bytes());
+    /// 
+    /// assert!(!p.valid());
+    /// p.check();
+    /// assert!(p.valid());
+    /// ```
+    #[inline(always)]
     pub fn check(&mut self) {
         assert!(self.package_id() > 0 && self.idempotent() > 0);
         self.raw_pos = self.raw_len();
@@ -185,11 +202,13 @@ impl Package {
         self.raw[11] = self.raw[0] ^ self.raw[self.raw_pos - 1];
     }
 
+    /// valid 判断 package是否有效
     #[inline(always)]
     pub fn valid(&self) -> bool {
         self.package_id() > 0 && self.idempotent() > 0 && self.raw_pos == self.raw_len()
     }
 
+    /// 设置 package_id
     #[inline(always)]
     pub fn set_package_id(&mut self, package_id: u16) {
         assert!(package_id > 0);
@@ -197,37 +216,44 @@ impl Package {
         self.raw_pos = 12;
     }
 
+    /// 获取 package_id
     #[inline(always)]
     pub fn package_id(&self) -> u16 {
         unsafe {*(self.raw.as_ptr() as *const u8 as *const u16)}
     }
 
+    /// 设置幂等
     #[inline(always)]
     pub fn set_idempotent(&mut self, idempotent: u32) {
         assert!(idempotent > 0);
         self.raw[2..6].copy_from_slice(&idempotent.to_le_bytes());
     }
 
+    /// 获取幂等
     #[inline(always)]
     pub fn idempotent(&self) -> u32 {
         unsafe {*(self.raw.as_ptr().add(2) as *const u8 as *const u32)}
     }
 
+    /// 获取 消息头校验码
     #[inline(always)]
     pub fn head_code(&self) -> u8 {
         self.raw[10]
     }
 
+    /// 获取 消息包校验码
     #[inline(always)]
     pub fn raw_code(&self) -> u8 {
         self.raw[11]
     }
 
+    /// 获取消息包长度
     #[inline(always)]
     pub fn raw_len(&self) -> usize {
         unsafe {*(self.raw.as_ptr().add(6) as *const u8 as *const u32) as usize}
     }
 
+    /// 设置消息体
     #[inline]
     pub fn set_data(&mut self, data: &[u8]) {
         let data_len = data.len();
@@ -242,11 +268,13 @@ impl Package {
         self.raw[Self::HEAD_SIZE..raw_len].copy_from_slice(data);
     }
 
+    /// 获取消息体
     #[inline(always)]
     pub fn data(&self) -> &[u8] {
         &self.raw[Self::HEAD_SIZE..self.raw_len()]
     }
 
+    /// 获取原始数据
     #[inline(always)]
     pub fn raw(&self) -> &[u8] {
         &self.raw[..self.raw_len()]
