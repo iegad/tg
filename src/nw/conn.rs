@@ -132,6 +132,7 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     ///
     /// 重置会话端, 使其处于未激活状态
     #[inline]
+    #[allow(clippy::cast_ref_to_mut)]
     pub(crate) fn reset(&self) {
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
@@ -142,7 +143,6 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
             this.recv_seq = 0;
             this.user_data = None;
         }
-
     }
 
     /// 获取原始套接字
