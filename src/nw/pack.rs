@@ -5,34 +5,93 @@ use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 use std::{sync::Arc, fmt::Display};
 use type_layout::TypeLayout;
 
+// ---------------------------------------------------- 对象池 ----------------------------------------------------
+//
+//
 lazy_static! {
-    pub static ref WBUF_POOL: LinearObjectPool<BytesMut> =
-        LinearObjectPool::new(|| BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
+    /// 在内部使用的 package 对象池
+    pub(crate) static ref PACK_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
+
+    /// 该对象池用于向对端发送数据.
+    pub static ref WBUF_POOL: LinearObjectPool<BytesMut> = LinearObjectPool::new(
+        || BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
         |v| {
             if v.capacity() < g::DEFAULT_BUF_SIZE {
                 v.resize(g::DEFAULT_BUF_SIZE, 0);
             }
             unsafe{ v.set_len(0); }
-        });
+        }
+    );
 
-    pub(crate) static ref PACK_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
+    /// 该对象池用于处理从对端接收的请求包
     pub static ref REQ_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
 }
 
+/// package 原始缓冲区数据
+/// 
+/// 该类型对象是从WBUF_POOL对象池中获取的数据, 使用完后会返还WBUF_POOL中.
+/// 
+/// 加 Arc的意义
+/// 
+/// `因为该类型的实例需要在 tokio::broadcast 管道中传递所以该类型必需实现Clone 特征
+/// 而 LinearReusable<'static, BytesMut> 并没有实现 Clone特征, 所以这里需要在外围加上一层 Arc, 这样该类型数据才能在管道中间被传递.`
 pub type PackBuf = Arc<LinearReusable<'static, BytesMut>>;
 
+/// RspBuf 应答缓冲区
+/// 
+/// Option<PackBuf> 的别名.
+pub type RspBuf = Option<PackBuf>;
+
+
+/// Package 数据包, 用于网络传输.
+/// 
+/// 在多次实验后, 最终选择了原始数据类型的Package定义, 目的当然为了极致的速度.
+/// 
+/// package 只有两个字段组成:
+/// 
+/// `raw` 表示一个连续的内存空间.
+/// 
+/// `raw_pos` 表示 raw的有效范围, 即 `raw[0..raw_pos]` 表示有效的数据.
+/// 
+/// 虽然只有两个字段, 但实际上 package有着稍许复杂的逻辑设计.
+/// 
+/// Package 由 `消息头` 和 `消息体` 组成.
+/// 
+/// # 消息头
+/// 
+/// 消息头由 5个字段组成, 共占 12 个字节.
+/// 
+/// `package_id` [u16] 表示 消息ID.
+/// 
+/// `idempotent` [u32] 表示 幂等, 用于重复消息过滤.
+/// 
+/// `raw_len`    [u32] 消息长度, 包括消息体, 例如: 消息数据为 b'Hello world', 那么 raw_len 为 12(消息头长度) + 11(消息数据长度) = 23.
+/// 
+/// `head_code`  [u8]  用于校验 消息头 是否有效, 该值的计算方式为 `raw[0] ^ raw[9]`, 由消息头第一个字节 异或 消息头第10个字节.
+/// 
+/// `raw_code`   [u8]  用于校验 package是否有效, 该值的计算方式为 `raw[0] ^ [raw_pos]`, 由原始数据第一个字节 异或 原始数据最后一个字节.
+/// 
+/// # 内存部局
+/// 
+/// `| package_id: 2bytes | idempotent: 4bytes | raw_len: 4bytes | head_code: 1byte | raw_code: 1byte | data nbytes |`
+/// 
+/// # PS
+/// 
+/// 消息头中的各字段按小端序排列
 #[derive(TypeLayout, Debug)]
 pub struct Package {
-    raw_pos: usize,
-    raw: Vec::<u8>,
+    raw_pos: usize, // 有效位置
+    raw: Vec::<u8>, // 原始内存空间
 }
 
 unsafe impl Sync for Package{}
 unsafe impl Send for Package{}
 
 impl Package {
+    /// 消息头长度
     pub const HEAD_SIZE: usize = 12;
 
+    /// 创建空 Package
     pub fn new() -> Self {
         Self { 
             raw: vec![0; g::DEFAULT_BUF_SIZE],
@@ -40,27 +99,31 @@ impl Package {
         }
     }
 
+    /// 跟据入参创建 有效 Package
     pub fn with_params(package_id: u16, idempotent: u32, data: &[u8]) -> Self {
         let mut res = Self::new();
         res.set_package_id(package_id);
         res.set_idempotent(idempotent);
         res.set_data(data);
-        res.active();
+        res.check();
         res
     }
 
+    /// 重置 Package
     #[inline(always)]
     pub fn reset(&mut self) {
         self.raw_pos = 0;
     }
 
-    #[inline]
-    pub fn to_bytes(&self, buf: &mut BytesMut) -> g::Result<()> {
-        assert!(self.valid());
-        buf.put(&self.raw[..self.raw_len()]);
-        Ok(())
+    /// 序列化到 buf中.
+    #[inline(always)]
+    pub fn to_bytes(&self, buf: &mut BytesMut) {
+        buf.put(&self.raw[..self.raw_pos]);
     }
 
+    /// 从buf中反序列化到当前package对象中.
+    /// 
+    /// 返回值为 从buf中消费的字节长度.
     pub fn from_bytes(&mut self, buf: &[u8]) -> g::Result<usize> {
         let buf_len = buf.len();
         let mut buf_pos = 0;
@@ -74,12 +137,15 @@ impl Package {
                 nleft = buf_len;
             }
 
-            self.raw[self.raw_pos..nleft].copy_from_slice(&buf[..nleft]);
+            self.raw[self.raw_pos..self.raw_pos + nleft].copy_from_slice(&buf[..nleft]);
             self.raw_pos += nleft;
             buf_pos += nleft;
 
-            if self.raw_pos == Self::HEAD_SIZE &&  self.raw[0] ^ self.raw[9] != self.head_code() {
-                return Err(g::Err::PackHeadInvalid);
+            // 检查 head_code
+            if self.raw_pos == Self::HEAD_SIZE {
+                if self.raw[0] ^ self.raw[9] != self.head_code() || self.package_id() == 0 || self.idempotent() == 0 {
+                    return Err(g::Err::PackHeadInvalid);
+                }
             }
         }
 
@@ -100,6 +166,11 @@ impl Package {
                 self.raw[self.raw_pos..self.raw_pos + nleft].copy_from_slice(&buf[buf_pos.. buf_pos + nleft]);
                 self.raw_pos += nleft;
                 buf_pos += nleft;
+
+                // 检查 raw_code
+                if self.raw_pos == raw_len && self.raw[0] ^ self.raw[self.raw_pos - 1] != self.raw_code() {
+                    return Err(g::Err::PackageInvalid);
+                }
             }
         }
 
@@ -107,20 +178,11 @@ impl Package {
     }
 
     #[inline]
-    pub fn active(&mut self) {
-        assert!(self.package_id() > 0 && self.idempotent() > 0 && self.raw_len() <= self.raw.len());
-
-        unsafe {
-            let p = self.raw.as_ptr();
-
-            let head_code = p.add(10) as *mut u8;
-            *head_code = self.raw[0] ^ self.raw[9];
-
-            let raw_code = p.add(11) as *mut u8;
-            *raw_code = self.raw[0] ^ self.raw[self.raw_len()-1];
-        }
-
-        self.raw_pos = self.raw_len()
+    pub fn check(&mut self) {
+        assert!(self.package_id() > 0 && self.idempotent() > 0);
+        self.raw_pos = self.raw_len();
+        self.raw[10] = self.raw[0] ^ self.raw[9];
+        self.raw[11] = self.raw[0] ^ self.raw[self.raw_pos - 1];
     }
 
     #[inline(always)]
@@ -132,6 +194,7 @@ impl Package {
     pub fn set_package_id(&mut self, package_id: u16) {
         assert!(package_id > 0);
         self.raw[0..2].copy_from_slice(&package_id.to_le_bytes());
+        self.raw_pos = 12;
     }
 
     #[inline(always)]
@@ -152,12 +215,12 @@ impl Package {
 
     #[inline(always)]
     pub fn head_code(&self) -> u8 {
-        unsafe {*(self.raw.as_ptr().add(10) as *const u8)}
+        self.raw[10]
     }
 
     #[inline(always)]
-    pub fn data_code(&self) -> u8 {
-        unsafe {*(self.raw.as_ptr().add(11) as *const u8)}
+    pub fn raw_code(&self) -> u8 {
+        self.raw[11]
     }
 
     #[inline(always)]
@@ -182,6 +245,11 @@ impl Package {
     #[inline(always)]
     pub fn data(&self) -> &[u8] {
         &self.raw[Self::HEAD_SIZE..self.raw_len()]
+    }
+
+    #[inline(always)]
+    pub fn raw(&self) -> &[u8] {
+        &self.raw[..self.raw_len()]
     }
 }
 
@@ -215,7 +283,7 @@ mod test_package {
         p1.set_package_id(1);
         p1.set_idempotent(2);
         p1.set_data(data.as_bytes());
-        p1.active();
+        p1.check();
 
         assert_eq!(1, p1.package_id());
         assert_eq!(2, p1.idempotent());
@@ -223,10 +291,10 @@ mod test_package {
         assert_eq!(std::str::from_utf8(p1.data()).unwrap(), data);
 
         let mut buf = bytes::BytesMut::new();
-        p1.to_bytes(&mut buf).unwrap();
+        p1.to_bytes(&mut buf);
 
         assert_eq!(p1.head_code(), p1.raw[0] ^ p1.raw[9]);
-        assert_eq!(p1.data_code(), p1.raw[0] ^ p1.raw[Package::HEAD_SIZE + 10]);
+        assert_eq!(p1.raw_code(), p1.raw[0] ^ p1.raw[Package::HEAD_SIZE + 10]);
 
         let mut p2 = Package::new();
         p2.from_bytes(&buf).unwrap();

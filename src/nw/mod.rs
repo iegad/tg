@@ -6,6 +6,6 @@ pub mod tcp;
 pub mod tools;
 
 #[cfg(windows)]
-pub type RawFd = u64;
+pub type Socket = u64;
 #[cfg(unix)]
-pub type RawFd = i32;
+pub type Socket = i32;

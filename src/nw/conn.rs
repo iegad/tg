@@ -6,7 +6,7 @@ use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc};
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 use tokio::{sync::broadcast, net::TcpStream};
 use crate::g;
-use super::{pack, RawFd};
+use super::{pack, Socket};
 
 // ---------------------------------------------- nw::Conn<U> ----------------------------------------------
 //
@@ -27,7 +27,7 @@ pub type ConnPool<T> = LinearObjectPool<ConnPtr<T>>;
 /// 用户自定义类型
 pub struct Conn<U: Default + Send + Sync> {
     // block
-    sockfd: RawFd,
+    sockfd: Socket,
     idempotent: u32, // 当前幂等, 用来确认消息是否过期
     send_seq: u32,
     recv_seq: u32,
@@ -108,7 +108,7 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
         stream.set_nodelay(true).unwrap();
 
         unsafe {
-            let v = &self.sockfd as *const RawFd as *mut RawFd;
+            let v = &self.sockfd as *const Socket as *mut Socket;
             #[cfg(unix)]
             { *v = stream.as_raw_fd(); }
     

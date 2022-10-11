@@ -2,7 +2,7 @@ use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc};
 use async_trait::async_trait;
 use tokio::{sync::broadcast, net::TcpStream};
 use crate::g;
-use super::{pack, RawFd};
+use super::{pack, Socket};
 #[cfg(unix)]
 use std::os::unix::prelude::AsRawFd;
 #[cfg(windows)]
@@ -57,7 +57,7 @@ pub trait IEvent: Sync + Clone + Default + 'static {
 //
 pub struct Client<U: Default + Send + Sync> {
     // block
-    sockfd: RawFd, // 原始套接字
+    sockfd: Socket, // 原始套接字
     recv_seq: u32,
     send_seq: u32,
     idempotent: u32,

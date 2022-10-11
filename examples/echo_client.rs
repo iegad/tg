@@ -7,7 +7,7 @@ use tokio::{
 
 async fn work() {
     let mut cli = TcpStream::connect("127.0.0.1:6688").await.unwrap();
-    let data = b"Hello world";
+    let data = b"1234567890";
 
     let (mut reader, mut writer) = cli.split();
     for i in 0..10000 {
@@ -15,10 +15,10 @@ async fn work() {
         req.set_package_id(1);
         req.set_idempotent(i + 1);
         req.set_data(data);
-        req.active();
+        req.check();
         
         let mut wbuf = WBUF_POOL.pull();
-        req.to_bytes(&mut wbuf).unwrap();
+        req.to_bytes(&mut wbuf);
         if let Err(err) = writer.write_all_buf(&mut *wbuf).await {
             println!("write failed: {:?}", err);
             break;

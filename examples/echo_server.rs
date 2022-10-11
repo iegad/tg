@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use pack::WBUF_POOL;
-use std::sync::Arc;
-use tg::{nw::pack, utils};
+use tg::{nw::pack::{self, RspBuf}, utils, make_wbuf};
 
 #[derive(Clone, Default)]
 struct EchoEvent;
@@ -14,12 +13,12 @@ impl tg::nw::server::IEvent for EchoEvent {
         &self,
         conn: &tg::nw::conn::ConnPtr<()>,
         req: &pack::Package,
-    ) -> tg::g::Result<Option<pack::PackBuf>> {
+    ) -> tg::g::Result<RspBuf> {
         assert_eq!(req.idempotent(), conn.recv_seq());
-        let mut rspbuf = WBUF_POOL.pull();
+        let mut wbuf = WBUF_POOL.pull();
         tracing::debug!("{}", req);
-        req.to_bytes(&mut rspbuf).unwrap();
-        Ok(Some(Arc::new(rspbuf)))
+        req.to_bytes(&mut wbuf);
+        Ok(make_wbuf!(wbuf))
     }
 
     async fn on_disconnected(&self, conn: &tg::nw::conn::ConnPtr<()>) {
