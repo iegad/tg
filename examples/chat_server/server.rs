@@ -1,20 +1,17 @@
 use async_trait::async_trait;
+use hashbrown::HashMap;
 use lazy_static::lazy_static;
-use std::collections::HashMap;
+use tg::nw::conn::{ConnPool, Conn};
+use tg::nw::server::Server;
 use std::sync::{Arc, Mutex};
 use tg::{g, nw::pack::WBUF_POOL};
 
 type ConnPtr = tg::nw::conn::ConnPtr<()>;
 
 lazy_static! {
-    pub static ref SERVER: Arc<tg::nw::server::Server<ChatEvent>> = tg::nw::server::Server::new_arc(
-        "0.0.0.0:6688",
-        g::DEFAULT_MAX_CONNECTIONS,
-        0
-    );
-    pub static ref SESSIONS: Arc<Mutex<HashMap<tg::nw::RawFd, ConnPtr>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    pub static ref CONN_POOL: tg::nw::conn::ConnPool<()> = tg::nw::conn::Conn::pool();
+    pub static ref SERVER: Arc<Server<ChatEvent>> = Server::new_arc("0.0.0.0:6688", g::DEFAULT_MAX_CONNECTIONS, 0);
+    pub static ref SESSIONS: Arc<Mutex<HashMap<tg::nw::RawFd, ConnPtr>>> = Arc::new(Mutex::new(HashMap::new()));
+    pub static ref CONN_POOL: ConnPool<()> = Conn::pool();
 }
 
 #[derive(Clone, Default)]
