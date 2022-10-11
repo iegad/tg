@@ -132,31 +132,7 @@ impl<T: IEvent> Server<T> {
     /// `max_connections` 最大连接数.
     ///
     /// `timeout` 会话端读超时(单位秒).
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use tg::nw::server::Server;
-    /// use async_trait::async_trait;
-    ///
-    /// #[derive(Copy, Clone, Default)]
-    /// struct DemoEvent;
-    ///
-    /// #[async_trait]
-    /// impl tg::nw::server::IEvent for DemoEvent {
-    ///     type U = ();
-    ///
-    ///     async fn on_process(&self, conn: &tg::nw::conn::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::PackBuf>> {
-    ///         println!("{:?} => {:?}", conn.remote(), req.data());
-    ///         Ok(None)
-    ///     }
-    /// }
-    ///
-    /// let server = Server::<DemoEvent>::new("0.0.0.0:6688", 100, 60);
-    /// assert_eq!(server.max_connections(), 100);
-    /// assert_eq!(server.host(), "0.0.0.0:6688");
-    /// ```
-    pub fn new(host: &'static str, max_connections: usize, timeout: u64) -> Self {
+    fn new(host: &'static str, max_connections: usize, timeout: u64) -> Self {
         let (shutdown, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
 
         Self {
@@ -203,11 +179,6 @@ impl<T: IEvent> Server<T> {
     /// ```
     pub fn new_arc(host: &'static str, max_connections: usize, timeout: u64) -> Arc<Self> {
         Arc::new(Self::new(host, max_connections, timeout))
-    }
-
-    pub fn new_pair(host: &'static str, max_connections: usize, timeout: u64) -> (Arc<Self>, Arc<Self>) {
-        let c = Self::new_arc(host, max_connections, timeout);
-        (c.clone(), c)
     }
 
     /// 监听地址

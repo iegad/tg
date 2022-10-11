@@ -40,10 +40,5 @@ lazy_static! {
 #[tokio::main]
 async fn main() {
     utils::init_log();
-
-    let (controller, server) = 
-        tg::nw::server::Server::<EchoEvent>::new_pair("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT);
-
-    tg::tcp_server_run!(server, controller, &CONN_POOL);
-    controller.wait().await;
+    tg::tcp_server_run!("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT, EchoEvent, &CONN_POOL);
 }
