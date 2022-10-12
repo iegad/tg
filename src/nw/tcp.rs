@@ -265,7 +265,7 @@ pub async fn client_run<T: super::client::IEvent>(host: &'static str, cli: Arc<C
         Ok(v) => v,
     };
 
-    if event.on_connected(&cli).await.is_err() {
+    if event.on_connected(&cli).is_err() {
         return;
     }
 

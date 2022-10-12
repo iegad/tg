@@ -15,7 +15,7 @@ fn pack_pool() {
         p.set_package_id(1);
         p.set_idempotent(i + 1);
         p.set_data(data);
-        p.check();
+        p.setup();
 
         assert!(p.valid());
     } 

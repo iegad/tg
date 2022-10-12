@@ -23,7 +23,7 @@ pub trait IEvent: Sync + Clone + Default + 'static {
     /// # on_connected
     /// 
     /// 客户端连接成功事件, 当成功与服务端连接后触发.
-    async fn on_connected(&self, cli: &Client<Self::U>) -> g::Result<()> {
+    fn on_connected(&self, cli: &Client<Self::U>) -> g::Result<()> {
         tracing::debug!("{:?} => {:?} has connected", cli.local, cli.remote);
         Ok(())
     }
@@ -196,17 +196,9 @@ impl<U: Default + Send + Sync> Client<U> {
         (self.shutdown_rx.resubscribe(), self.wbuf_consumer.clone(), self.wbuf_tx.clone(), self.wbuf_tx.subscribe())
     }
 
-    #[cfg(unix)]
     /// 获取原始套接字
     #[inline(always)]
-    pub fn sockfd(&self) -> i32 {
-        self.sockfd
-    }
-
-    #[cfg(windows)]
-    /// 获取原始套接字
-    #[inline(always)]
-    pub fn sockfd(&self) -> u64 {
+    pub fn sockfd(&self) -> super::Socket {
         self.sockfd
     }
 

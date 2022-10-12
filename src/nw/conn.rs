@@ -1,7 +1,7 @@
 #[cfg(unix)]
 use std::os::unix::prelude::AsRawFd;
 #[cfg(windows)]
-use std::os::windows::prelude::{AsRawSocket, RawSocket};
+use std::os::windows::prelude::AsRawSocket;
 use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc};
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 use tokio::{sync::broadcast, net::TcpStream};
@@ -146,16 +146,8 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     }
 
     /// 获取原始套接字
-    #[cfg(unix)]
     #[inline(always)]
-    pub fn sockfd(&self) -> i32 {
-        self.sockfd
-    }
-
-    /// 获取原始套接字
-    #[cfg(windows)]
-    #[inline(always)]
-    pub fn sockfd(&self) -> RawSocket {
+    pub fn sockfd(&self) -> super::Socket {
         self.sockfd
     }
 

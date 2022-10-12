@@ -15,7 +15,7 @@ async fn work() {
         req.set_package_id(1);
         req.set_idempotent(i + 1);
         req.set_data(data);
-        req.check();
+        req.setup();
         
         let mut wbuf = WBUF_POOL.pull();
         req.to_bytes(&mut wbuf);

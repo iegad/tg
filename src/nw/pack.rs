@@ -105,7 +105,7 @@ impl Package {
         res.set_package_id(package_id);
         res.set_idempotent(idempotent);
         res.set_data(data);
-        res.check();
+        res.setup();
         res
     }
 
@@ -175,10 +175,10 @@ impl Package {
         Ok(buf_pos)
     }
 
-    /// check 会将package 包的 head_code 和 raw_code 打上, 并设置raw_pow.
+    /// setup 会将package 包的 head_code 和 raw_code 打上, 并设置raw_pow.
     /// 
     /// 如果创建的是一个空 Package, package 在设置了各个字段之后, 是不会打上 head_code和 raw_code, 并且 raw_pos也不会有改变.
-    /// 这将导致该 Package 为无效实例 `this.valid() == false`. 所以在设置完该实例的所有字段之后要调用 check函数, 才能让该实例有效.
+    /// 这将导致该 Package 为无效实例 `this.valid() == false`. 所以在设置完该实例的所有字段之后要调用 setup 函数, 才能让该实例有效.
     /// 
     /// # Example
     /// 
@@ -191,11 +191,11 @@ impl Package {
     /// p.set_data("Hello world".as_bytes());
     /// 
     /// assert!(!p.valid());
-    /// p.check();
+    /// p.setup();
     /// assert!(p.valid());
     /// ```
     #[inline(always)]
-    pub fn check(&mut self) {
+    pub fn setup(&mut self) {
         assert!(self.package_id() > 0 && self.idempotent() > 0);
         self.raw_pos = self.raw_len();
         self.raw[10] = self.raw[0] ^ self.raw[9];
@@ -311,7 +311,7 @@ mod test_package {
         p1.set_package_id(1);
         p1.set_idempotent(2);
         p1.set_data(data.as_bytes());
-        p1.check();
+        p1.setup();
 
         assert_eq!(1, p1.package_id());
         assert_eq!(2, p1.idempotent());
