@@ -181,7 +181,7 @@ impl Package {
         Ok(buf_pos)
     }
 
-    /// setup 会将package 包的 head_code 和 raw_code 打上, 并设置raw_pow.
+    /// setup 会将package 包的 head_code 和 raw_code 打上, 并设置raw_pos.
     /// 
     /// 如果创建的是一个空 Package, package 在设置了各个字段之后, 是不会打上 head_code和 raw_code, 并且 raw_pos也不会有改变.
     /// 这将导致该 Package 为无效实例 `this.valid() == false`. 所以在设置完该实例的所有字段之后要调用 setup 函数, 才能让该实例有效.

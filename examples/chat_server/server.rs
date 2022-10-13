@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use hashbrown::HashMap;
 use lazy_static::lazy_static;
+use tg::make_wbuf;
 use tg::nw::conn::{ConnPool, Conn};
+use tg::nw::pack::RspBuf;
 use tg::nw::server::Server;
 use std::sync::{Arc, Mutex};
 use tg::{g, nw::pack::WBUF_POOL};
@@ -25,12 +27,13 @@ impl tg::nw::server::IEvent for ChatEvent {
         &self,
         conn: &ConnPtr,
         req: &tg::nw::pack::Package,
-    ) -> g::Result<Option<tg::nw::pack::PackBuf>> {
+    ) -> g::Result<RspBuf> {
         assert_eq!(req.idempotent(), conn.recv_seq());
 
+        tracing::info!("[{:?}] {req}", conn.remote());
         let mut wbuf = WBUF_POOL.pull();
         req.to_bytes(&mut wbuf);
-        Ok(Some(Arc::new(wbuf)))
+        Ok(make_wbuf!(wbuf))
     }
 
     async fn on_connected(&self, conn: &ConnPtr) -> g::Result<()> {

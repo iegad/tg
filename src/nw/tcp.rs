@@ -76,7 +76,6 @@ where
         select! {
             // when recv shutdown signal.
             _ = shutdown_rx.recv() => {
-                tracing::debug!("accept_loop is breaking...");
                 break 'accept_loop;
             }
 
@@ -166,7 +165,6 @@ async fn conn_handle<T: super::server::IEvent>(
 
             // connection shutdown signal
             _ = conn_shutdown_rx.recv() => {
-                tracing::debug!("[{:05}-{:?}] conn_loop is breaking...", conn.sockfd(), conn.remote());
                 break 'conn_loop;
             }
 
@@ -182,8 +180,8 @@ async fn conn_handle<T: super::server::IEvent>(
             result_wbuf = w_rx.recv() => {
                 let wbuf = match result_wbuf {
                     Err(err) => {
-                        tracing::error!("wch recv failed: {:?}", err);
-                        continue;
+                        tracing::error!("[TG] wch recv failed: {:?}", err);
+                        break 'conn_loop;
                     }
                     Ok(v) => v,
                 };
@@ -192,6 +190,8 @@ async fn conn_handle<T: super::server::IEvent>(
                     event.on_error(&conn, g::Err::TcpWriteFailed(format!("{err}"))).await;
                     break 'conn_loop;
                 }
+
+                tracing::debug!("{:?}", hex::encode(&wbuf[..]));
                 conn.send_seq_incr();
             }
 
@@ -206,24 +206,26 @@ async fn conn_handle<T: super::server::IEvent>(
                     Ok(v) => v,
                 };
 
-                tracing::debug!("读取 buf 长度: {}", nread);
-
                 let mut consume = 0;
                 'pack_loop: loop {
                     if req.valid() {
-                        tracing::debug!("处理消息.");
-                        conn.recv_seq_incr();
-                        let option_rsp = match event.on_process(&conn, &req).await {
-                            Err(_) => break 'conn_loop,
-                            Ok(v) => v,
-                        };
+                        if req.idempotent() > conn.idempotent() {
+                            conn.recv_seq_incr();
+                            let option_rsp = match event.on_process(&conn, &req).await {
+                                Err(_) => break 'conn_loop,
+                                Ok(v) => v,
+                            };
 
-                        req.reset();
-                        if let Some(rsp_bytes) = option_rsp {
-                            if let Err(err) = w_tx.send(rsp_bytes) {
-                                tracing::error!("w_tx.send failed: {err}");
+                            conn.set_idempotent(req.idempotent());
+                            if let Some(rsp_bytes) = option_rsp {
+                                if let Err(err) = w_tx.send(rsp_bytes) {
+                                    tracing::error!("[TG] w_tx.send failed: {err}");
+                                    break 'conn_loop;
+                                }
                             }
                         }
+                        
+                        req.reset();
                     } else {
                         consume += match req.from_bytes(&conn.rbuf()[consume..nread]) {
                             Err(err) => {
@@ -270,10 +272,12 @@ pub async fn client_run<T: super::client::IEvent>(host: &'static str, cli: Arc<C
     }
 
     let mut req = pack::REQ_POOL.pull();
-    let (mut shutdown_rx, 
+    let (
+        mut shutdown_rx, 
         wbuf_consumer, 
         w_tx, 
-        mut w_rx) = cli.setup(&mut stream);
+        mut w_rx
+    ) = cli.setup(&mut stream);
     let (mut reader, mut writer) = stream.split();
     let interval = if cli.timeout() > 0 {
         cli.timeout()
@@ -324,44 +328,52 @@ pub async fn client_run<T: super::client::IEvent>(host: &'static str, cli: Arc<C
                 };
 
                 if w_tx.send(wbuf).is_err() {
-                    tracing::error!("w_tx send failed");
+                    tracing::error!("[TG] w_tx send failed");
                     break 'cli_loop;
                 }
             }
 
             // read package
             result_read = reader.read(cli.rbuf_mut()) => {
-                match result_read {
+                let nread = match result_read {
                     Err(err) => {
                         event.on_error(&cli, g::Err::TcpReadFailed(format!("{err}"))).await;
                         break 'cli_loop;
                     }
                     Ok(0) => break 'cli_loop,
-                    Ok(_) => (),
-                }
+                    Ok(v) => v,
+                };
 
+                let mut consume = 0;
                 'pack_loop: loop {
                     if req.valid() {
                         cli.recv_seq_incr();
-                        let option_rsp = match event.on_process(&cli, &req).await {
+                        tracing::debug!("[TG] Request's Raw: {}", hex::encode(req.raw()));
+                        let option_rspbuf = match event.on_process(&cli, &req).await {
                             Err(_) => break 'cli_loop,
                             Ok(v) => v,
                         };
 
                         cli.set_idempotent(req.idempotent());
                         req.reset();
-                        if let Some(rsp) = option_rsp {
-                            if w_tx.send(rsp).is_err() {
-                                tracing::error!("w_tx send failed");
+                        if let Some(rspbuf) = option_rspbuf {
+                            if let Err(err) = w_tx.send(rspbuf) {
+                                tracing::error!("[TG] w_tx send failed: {err}");
                                 break 'cli_loop;
                             }
                         }
-                    } else if let Err(err) = req.from_bytes(cli.rbuf()) {
-                        event.on_error(&cli, err).await;
-                        break 'cli_loop;
+                    } else {
+                        consume += match req.from_bytes(&cli.rbuf()[consume..nread]) {
+                            Err(err) => {
+                                event.on_error(&cli, err).await;
+                                cli.shutdown();
+                                break 'pack_loop;
+                            }
+                            Ok(v) => v,
+                        };
                     }
 
-                    if !req.valid() && cli.rbuf().len() < pack::Package::HEAD_SIZE {
+                    if consume == nread && !req.valid() {
                         break 'pack_loop;
                     }
                 }

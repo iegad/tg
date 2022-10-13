@@ -24,7 +24,7 @@ impl tg::nw::server::IEvent for SimpleEvent {
             conn.remote(),
             conn.recv_seq()
         );
-        assert_eq!(1000, conn.recv_seq());
+        assert_eq!(10000, conn.recv_seq());
     }
 }
 

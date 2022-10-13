@@ -57,19 +57,19 @@ pub trait IEvent: Sync + Clone + Default + 'static {
 //
 pub struct Client<U: Default + Send + Sync> {
     // block
-    sockfd: Socket, // 原始套接字
-    recv_seq: u32,
-    send_seq: u32,
-    idempotent: u32,
-    timeout: u64, // 读超时
-    remote: SocketAddr,
-    local: SocketAddr, 
-    rbuf: Vec<u8>, // 读缓冲区
+    sockfd: Socket,       // 原始套接字
+    recv_seq: u32,        // 接收序列
+    send_seq: u32,        // 发送序列
+    idempotent: u32,      // 幂等
+    timeout: u64,         // 读超时
+    remote: SocketAddr,   // 对端地址
+    local: SocketAddr,    // 本端地址
+    rbuf: Vec<u8>,        // 读缓冲区
     user_data: Option<U>, // 用户数据
     // controller
-    wbuf_consumer: async_channel::Receiver<pack::PackBuf>, // 消费者写管道, 多个Client会抢占从该管道获取需要发送的消息, 达到负载均衡的目的
-    shutdown_rx: broadcast::Receiver<u8>, // 客户端关闭管道
-    wbuf_tx: broadcast::Sender<pack::PackBuf>, // io 发送管道
+    wbuf_consumer: async_channel::Receiver<pack::PackBuf>, // 消费者写管道
+    shutdown_tx: broadcast::Sender<u8>,                  // 客户端关闭管道
+    wbuf_tx: broadcast::Sender<pack::PackBuf>,             // io 发送管道
 }
 
 impl<U: Default + Send + Sync> Client<U> {
@@ -79,20 +79,18 @@ impl<U: Default + Send + Sync> Client<U> {
     /// 
     /// # 入参
     /// 
-    /// `timeout` 读超时
+    /// `timeout`       读超时(单位秒)
     /// 
-    /// `wbuf_consumer` 消费者写管道
+    /// `wbuf_consumer` 消费者写管道, 多个Client会抢占从该管道获取需要发送的消息, 达到负载均衡的目的
     /// 
-    /// `shutdown_rx` 客户端关闭管道
-    /// 
-    /// `user_data` 用户数据
+    /// `user_data`     用户数据
     pub(crate) fn new(
         timeout: u64,
         wbuf_consumer: async_channel::Receiver<pack::PackBuf>,
-        shutdown_rx: broadcast::Receiver<u8>,
         user_data: Option<U>,
     ) -> Self {
         let (wbuf_tx, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
+        let (shutdown_tx, _) = broadcast::channel(1);
 
         Self {
             sockfd: 0,
@@ -104,7 +102,7 @@ impl<U: Default + Send + Sync> Client<U> {
             local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
             rbuf: vec![0u8; g::DEFAULT_BUF_SIZE],
             wbuf_consumer,
-            shutdown_rx,
+            shutdown_tx,
             wbuf_tx,
             user_data,
         }
@@ -150,18 +148,17 @@ impl<U: Default + Send + Sync> Client<U> {
     ///     }
     /// }
     /// 
-    /// let (shutdown, _) = tokio::sync::broadcast::channel(1);
     /// let (producer, consumer) = async_channel::bounded(tg::g::DEFAULT_CHAN_SIZE);
-    /// let cli = tg::nw::client::Client::<()>::new_arc(0, consumer, shutdown.subscribe(), None);
+    /// let (cli, controller) = tg::nw::client::Client::<()>::new_pair(0, consumer, None);
     /// // ...
     /// ```
-    pub fn new_arc(        
+    pub fn new_pair(        
         timeout: u64,
         wbuf_consumer: async_channel::Receiver<pack::PackBuf>,
-        shutdown_rx: broadcast::Receiver<u8>,
         user_data: Option<U>,
-    ) -> Arc<Self> {
-        Arc::new(Self::new(timeout, wbuf_consumer, shutdown_rx, user_data))
+    ) -> (Arc<Self>, Arc<Self>) {
+        let c = Arc::new(Self::new(timeout, wbuf_consumer, user_data));
+        (c.clone(), c)
     }
 
     /// 装载
@@ -172,13 +169,18 @@ impl<U: Default + Send + Sync> Client<U> {
     /// 
     /// 1, 关闭管道 receiver
     /// 
-    /// 2, 消息者管道 receiver
+    /// 2, 消费者管道 receiver
     /// 
     /// 3, io 管道 sender
     /// 
     /// 4, io 管道 receiver
     #[allow(clippy::cast_ref_to_mut)]
-    pub(crate) fn setup(&self, stream: &mut TcpStream) -> (broadcast::Receiver<u8>, async_channel::Receiver<pack::PackBuf>, broadcast::Sender<pack::PackBuf>, broadcast::Receiver<pack::PackBuf>) {
+    pub(crate) fn setup(&self, stream: &mut TcpStream) -> (
+        broadcast::Receiver<u8>,                // 关闭管道
+        async_channel::Receiver<pack::PackBuf>, // 负载发送管道
+        broadcast::Sender<pack::PackBuf>,       // io 写管道
+        broadcast::Receiver<pack::PackBuf>      // io 读管道
+    ) {
         unsafe {
             let cli = &mut *(self as *const Client<U> as *mut Client<U>);
             cli.remote = stream.peer_addr().unwrap();
@@ -193,7 +195,7 @@ impl<U: Default + Send + Sync> Client<U> {
             }
         }
 
-        (self.shutdown_rx.resubscribe(), self.wbuf_consumer.clone(), self.wbuf_tx.clone(), self.wbuf_tx.subscribe())
+        (self.shutdown_tx.subscribe(), self.wbuf_consumer.clone(), self.wbuf_tx.clone(), self.wbuf_tx.subscribe())
     }
 
     /// 获取原始套接字
@@ -271,14 +273,6 @@ impl<U: Default + Send + Sync> Client<U> {
         self.user_data.as_ref()
     }
 
-    /// 发消息给对端
-    #[inline(always)]
-    pub fn send(&self, wbuf: pack::PackBuf) {
-        if self.wbuf_tx.send(wbuf).is_err() {
-            tracing::debug!("wbuf_tx.send failed");
-        }
-    }
-
     /// 获取mutable 读缓冲区
     #[inline(always)]
     #[allow(clippy::cast_ref_to_mut)]
@@ -291,5 +285,20 @@ impl<U: Default + Send + Sync> Client<U> {
     #[inline(always)]
     pub(crate) fn rbuf(&self) -> &[u8] {
         &self.rbuf
+    }
+
+    /// 关闭客户端
+    pub fn shutdown(&self) {
+        if self.shutdown_tx.receiver_count() > 0 && self.shutdown_tx.send(1).is_err() {
+            tracing::error!("[TG] shutdown_tx.send failed");
+        }
+    }
+
+    /// 发消息给对端
+    #[inline]
+    pub fn send(&self, wbuf: pack::PackBuf) {
+        if self.wbuf_tx.receiver_count() > 0 && self.wbuf_tx.send(wbuf).is_err() {
+            tracing::error!("[TG] wbuf_tx.send failed");
+        }
     }
 }

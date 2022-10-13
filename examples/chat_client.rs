@@ -2,8 +2,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tg::{g, nw::pack, utils};
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    sync::broadcast,
+    io::{AsyncBufReadExt, BufReader}
 };
 
 #[derive(Default, Clone, Copy)]
@@ -18,13 +17,7 @@ impl tg::nw::client::IEvent for ChatEvent {
         cli: &tg::nw::client::Client<()>,
         req: &pack::Package,
     ) -> g::Result<Option<pack::PackBuf>> {
-        tracing::debug!(
-            "from server[{:?}]: {} => {}",
-            cli.local(),
-            std::str::from_utf8(req.data()).unwrap(),
-            req.idempotent(),
-        );
-
+        tracing::debug!("from server[{:?}]: {req}", cli.local());
         Ok(None)
     }
 }
@@ -35,9 +28,8 @@ async fn main() {
 
     let mut reader = BufReader::new(tokio::io::stdin());
     let mut line = String::new();
-    let (tx, _) = broadcast::channel(1);
     let (p, c) = async_channel::bounded(g::DEFAULT_CHAN_SIZE);
-    let cli = tg::nw::client::Client::<()>::new_arc(30, c, tx.subscribe(), None);
+    let (cli, controller) = tg::nw::client::Client::<()>::new_pair(30, c, None);
 
     tokio::spawn(async move {
         tg::nw::tcp::client_run::<ChatEvent>("127.0.0.1:6688", cli).await;
@@ -45,11 +37,12 @@ async fn main() {
 
     let mut idempotent = 1;
 
-    for _ in 0..10000 {
+    for i in 0..10000 {
         let mut req = pack::REQ_POOL.pull();
-        req.set_package_id(1);
+        req.set_package_id(i + 1);
         req.set_idempotent(idempotent);
         req.set_data("Hello world".as_bytes());
+        req.setup();
 
         let mut wbuf = pack::WBUF_POOL.pull();
         req.to_bytes(&mut wbuf);
@@ -57,6 +50,8 @@ async fn main() {
         p.send(Arc::new(wbuf)).await.unwrap();
         idempotent += 1;
     }
+
+    tracing::info!("开始...");
 
     'stdin_loop: loop {
         let result_read = reader.read_line(&mut line).await;
@@ -68,7 +63,7 @@ async fn main() {
         let data = line.trim();
         if data.to_ascii_lowercase() == "exit" {
             tracing::debug!("...");
-            tx.send(1).unwrap();
+            controller.shutdown();
             break 'stdin_loop;
         }
 
@@ -76,6 +71,7 @@ async fn main() {
         req.set_package_id(1);
         req.set_idempotent(idempotent);
         req.set_data(data.as_bytes());
+        req.setup();
 
         let mut wbuf = pack::WBUF_POOL.pull();
         req.to_bytes(&mut wbuf);

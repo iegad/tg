@@ -166,7 +166,7 @@ pub type Result<T> = std::result::Result<T, Err>;
 pub const DEFAULT_HOST: &str = "0.0.0.0:8080";
 /// 最大连接数
 pub const DEFAULT_MAX_CONNECTIONS: usize = 1000;
-/// 管道默认长度: 100
+/// 管道默认长度: 1000
 pub const DEFAULT_CHAN_SIZE: usize = 1000;
 /// 默认读超时值 60秒
 pub const DEFAULT_READ_TIMEOUT: u64 = 60;

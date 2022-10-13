@@ -188,6 +188,14 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
         self.idempotent
     }
 
+    #[inline(always)]
+    pub(crate) fn set_idempotent(&self, idempotent: u32) {
+        unsafe {
+            let p = &self.idempotent as *const u32 as *mut u32;
+            *p = idempotent;
+        }
+    }
+
     /// 获取接收序列
     #[inline(always)]
     pub fn recv_seq(&self) -> u32 {
