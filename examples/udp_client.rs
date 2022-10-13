@@ -23,7 +23,7 @@ async fn main() {
 
     let mut total = 0;
 
-    for i in 0..100000 {
+    for i in 0..5000 {
         let data = format!("Hello world: {i}");
 
         match sock.send_to(data.as_bytes(), target).await {

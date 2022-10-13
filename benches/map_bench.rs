@@ -1,3 +1,6 @@
+//! 该测试证明, map的方式不如pool在表现好.
+// 猜测: 可能是因为即使是rwlock 也需要使用系统调用产生中断.
+
 use std::sync::{Arc, RwLock};
 use criterion::{Criterion, criterion_group, criterion_main};
 use hashbrown::HashMap;
