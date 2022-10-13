@@ -1,4 +1,3 @@
-use bytes::{BytesMut, BufMut};
 use crate::g;
 use lazy_static::lazy_static;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
@@ -13,18 +12,16 @@ lazy_static! {
     pub(crate) static ref PACK_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
 
     /// 该对象池用于向对端发送数据.
-    pub static ref WBUF_POOL: LinearObjectPool<BytesMut> = LinearObjectPool::new(
-        || BytesMut::with_capacity(g::DEFAULT_BUF_SIZE),
-        |v| {
-            if v.capacity() < g::DEFAULT_BUF_SIZE {
-                v.resize(g::DEFAULT_BUF_SIZE, 0);
-            }
-            unsafe{ v.set_len(0); }
-        }
+    pub static ref WBUF_POOL: LinearObjectPool<Vec<u8>> = LinearObjectPool::new(
+        || vec![0u8; g::DEFAULT_BUF_SIZE],
+        |_v| {}
     );
 
-    /// 该对象池用于处理从对端接收的请求包
+    /// 该对象池用于处理 请求包
     pub static ref REQ_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
+
+    /// 该对象池用于处理 应答包
+    pub static ref RSP_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
 }
 
 /// package 原始缓冲区数据
@@ -35,7 +32,7 @@ lazy_static! {
 /// 
 /// `因为该类型的实例需要在 tokio::broadcast 管道中传递所以该类型必需实现Clone 特征
 /// 而 LinearReusable<'static, BytesMut> 并没有实现 Clone特征, 所以这里需要在外围加上一层 Arc, 这样该类型数据才能在管道中间被传递.`
-pub type PackBuf = Arc<LinearReusable<'static, BytesMut>>;
+pub type PackBuf = Arc<LinearReusable<'static, Vec<u8>>>;
 
 /// RspBuf 应答缓冲区
 /// 
@@ -117,8 +114,17 @@ impl Package {
 
     /// 序列化到 buf中.
     #[inline(always)]
-    pub fn to_bytes(&self, buf: &mut BytesMut) {
-        buf.put(&self.raw[..self.raw_pos]);
+    pub fn to_bytes(&self, buf: &mut Vec<u8>) {
+        if buf.len() < self.raw_pos {
+            if buf.capacity() < self.raw_pos {
+                buf.resize(self.raw_pos, 0);
+            } else {
+                unsafe { buf.set_len(self.raw_pos); }
+            }
+        }
+
+        buf[..self.raw_pos].copy_from_slice(&self.raw[..self.raw_pos]);
+        unsafe { buf.set_len(self.raw_pos); }
     }
 
     /// 从buf中反序列化到当前package对象中.
@@ -318,7 +324,7 @@ mod test_package {
         assert_eq!(Package::HEAD_SIZE + data.len(), p1.raw_len());
         assert_eq!(std::str::from_utf8(p1.data()).unwrap(), data);
 
-        let mut buf = bytes::BytesMut::new();
+        let mut buf = crate::nw::pack::WBUF_POOL.pull();
         p1.to_bytes(&mut buf);
 
         assert_eq!(p1.head_code(), p1.raw[0] ^ p1.raw[9]);

@@ -12,7 +12,7 @@ async fn work() {
         let req = tg::nw::pack::Package::with_params(1, i + 1, data);
         let mut wbuf = WBUF_POOL.pull();
         req.to_bytes(&mut wbuf);
-        if let Err(err) = writer.write_all_buf(&mut *wbuf).await {
+        if let Err(err) = writer.write_all(&wbuf).await {
             println!("write failed: {:?}", err);
             break;
         }

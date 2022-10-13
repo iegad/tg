@@ -1,5 +1,5 @@
 use futures_util::future;
-use tg::{g, nw::pack::{WBUF_POOL, REQ_POOL}, utils};
+use tg::{g, nw::pack::{WBUF_POOL, REQ_POOL, RSP_POOL}, utils};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -7,7 +7,7 @@ use tokio::{
 
 async fn work() {
     let mut cli = TcpStream::connect("127.0.0.1:6688").await.unwrap();
-    let data = b"1234567890";
+    let data = b"Hello world";
 
     let (mut reader, mut writer) = cli.split();
     for i in 0..10000 {
@@ -19,13 +19,13 @@ async fn work() {
         
         let mut wbuf = WBUF_POOL.pull();
         req.to_bytes(&mut wbuf);
-        if let Err(err) = writer.write_all_buf(&mut *wbuf).await {
+        if let Err(err) = writer.write_all(&wbuf).await {
             println!("write failed: {:?}", err);
             break;
         }
 
         let mut rbuf = [0u8; g::DEFAULT_BUF_SIZE];
-        let mut rsp = tg::nw::pack::Package::new();
+        let mut rsp = RSP_POOL.pull();
 
         'reader_loop: loop {
             let nread = match reader.read(&mut rbuf).await {
