@@ -101,6 +101,8 @@ pub enum Err {
     /// tcp::Conn 读超时
     TcpReadTimeout,
 
+    TcpWriteTimeout,
+
     /// TcpStream::read 调用失败, 附加值为错误详情
     TcpReadFailed(String),
 

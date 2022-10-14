@@ -24,12 +24,12 @@ impl tg::nw::server::IEvent for SimpleEvent {
             conn.remote(),
             conn.recv_seq()
         );
-        assert_eq!(10000, conn.recv_seq());
+        debug_assert_eq!(10000, conn.recv_seq());
     }
 }
 
 #[tokio::main]
 async fn main() {
     utils::init_log();
-    tg::tcp_server_run!("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT, SimpleEvent);
+    tg::tcp_server_run!("0.0.0.0:6688", 100, 10, SimpleEvent);
 }

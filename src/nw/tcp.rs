@@ -143,8 +143,6 @@ async fn conn_handle<T: super::server::IEvent>(
         std::time::Duration::from_secs(timeout)
     };
 
-    let mut ticker = tokio::time::interval(interval);
-
     // step 4: get request instance.
     let mut req = pack::PACK_POOL.pull();
 
@@ -155,8 +153,6 @@ async fn conn_handle<T: super::server::IEvent>(
 
     // step 6: conn_loop.
     'conn_loop: loop {
-        ticker.reset();
-
         select! {
             // server shutdown signal
             _ = shutdown_rx.recv() => {
@@ -166,14 +162,6 @@ async fn conn_handle<T: super::server::IEvent>(
             // connection shutdown signal
             _ = conn_shutdown_rx.recv() => {
                 break 'conn_loop;
-            }
-
-            // timeout ticker
-            _ = ticker.tick() => {
-                if timeout > 0 {
-                    event.on_error(&conn, g::Err::TcpReadTimeout).await;
-                    break 'conn_loop;
-                }
             }
 
             // get response from write channel to write to remote.
@@ -186,7 +174,16 @@ async fn conn_handle<T: super::server::IEvent>(
                     Ok(v) => v,
                 };
 
-                if let Err(err) = writer.write_all(&wbuf).await {
+                let result_write = match tokio::time::timeout(interval, writer.write_all(&wbuf)).await {
+                    Err(_) => {
+                        event.on_error(&conn, g::Err::TcpWriteTimeout).await;
+                        break 'conn_loop;
+                    }
+
+                    Ok(v) => v,
+                };
+
+                if let Err(err) = result_write {
                     event.on_error(&conn, g::Err::TcpWriteFailed(format!("{err}"))).await;
                     break 'conn_loop;
                 }
@@ -196,7 +193,16 @@ async fn conn_handle<T: super::server::IEvent>(
             }
 
             // connection read data.
-            result_read = reader.read(conn.rbuf_mut()) => {
+            result_timeout = tokio::time::timeout(interval, reader.read(conn.rbuf_mut())) => {
+                let result_read = match result_timeout {
+                    Err(_) => {
+                        event.on_error(&conn, g::Err::TcpReadTimeout).await;
+                        break 'conn_loop;
+                    }
+
+                    Ok(v) => v,
+                };
+
                 let nread = match result_read {
                     Err(err) => {
                         event.on_error(&conn, g::Err::TcpReadFailed(format!("{err}"))).await;
