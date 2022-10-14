@@ -2,7 +2,7 @@ use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc};
 use async_trait::async_trait;
 use tokio::{sync::broadcast, net::TcpStream};
 use crate::g;
-use super::{pack, Socket};
+use super::{pack::{self, RspBuf}, Socket};
 #[cfg(unix)]
 use std::os::unix::prelude::AsRawFd;
 #[cfg(windows)]
@@ -49,7 +49,7 @@ pub trait IEvent: Sync + Clone + Default + 'static {
         &self,
         cli: &Client<Self::U>,
         req: &pack::Package,
-    ) -> g::Result<Option<pack::PackBuf>>;
+    ) -> g::Result<RspBuf>;
 }
 
 // ---------------------------------------------- Client<T> ----------------------------------------------
@@ -125,32 +125,33 @@ impl<U: Default + Send + Sync> Client<U> {
     /// # Example
     /// 
     /// ```
-    /// #[derive(Default, Clone, Copy)]
-    /// struct DemoEvent;
-    /// 
-    /// #[async_trait::async_trait]
-    /// impl tg::nw::client::IEvent for DemoEvent {
-    ///     type U = ();
-    /// 
-    ///     async fn on_process(
-    ///         &self,
-    ///         cli: &tg::nw::client::Client<()>,
-    ///         req: &tg::nw::pack::Package,
-    ///     ) -> tg::g::Result<Option<tg::nw::pack::PackBuf>> {
-    ///         tracing::debug!(
-    ///             "from server[{:?}]: {} => {}",
-    ///             cli.local(),
-    ///             std::str::from_utf8(req.data()).unwrap(),
-    ///             req.idempotent(),
-    ///         );
-    /// 
-    ///         Ok(None)
-    ///     }
-    /// }
-    /// 
-    /// let (producer, consumer) = async_channel::bounded(tg::g::DEFAULT_CHAN_SIZE);
+    /// # use tg::nw::pack::RspBuf;
+    /// #
+    /// # #[derive(Default, Clone, Copy)]
+    /// # struct DemoEvent;
+    /// #
+    /// # #[async_trait::async_trait]
+    /// # impl tg::nw::client::IEvent for DemoEvent {
+    /// #     type U = ();
+    /// # 
+    /// #     async fn on_process(
+    /// #         &self,
+    /// #         cli: &tg::nw::client::Client<()>,
+    /// #         req: &tg::nw::pack::Package,
+    /// #     ) -> tg::g::Result<RspBuf> {
+    /// #         tracing::debug!(
+    /// #             "from server[{:?}]: {} => {}",
+    /// #             cli.local(),
+    /// #             std::str::from_utf8(req.data()).unwrap(),
+    /// #             req.idempotent(),
+    /// #         );
+    /// # 
+    /// #         Ok(None)
+    /// #     }
+    /// # }
+    /// #
+    /// # let (producer, consumer) = async_channel::bounded(tg::g::DEFAULT_CHAN_SIZE);
     /// let (cli, controller) = tg::nw::client::Client::<()>::new_pair(0, consumer, None);
-    /// // ...
     /// ```
     pub fn new_pair(        
         timeout: u64,
@@ -182,7 +183,7 @@ impl<U: Default + Send + Sync> Client<U> {
         broadcast::Receiver<pack::PackBuf>      // io 读管道
     ) {
         unsafe {
-            let cli = &mut *(self as *const Client<U> as *mut Client<U>);
+            let cli = &mut *(self as *const Self as *mut Self);
             cli.remote = stream.peer_addr().unwrap();
             cli.local = stream.local_addr().unwrap();
             #[cfg(windows)]
@@ -288,6 +289,7 @@ impl<U: Default + Send + Sync> Client<U> {
     }
 
     /// 关闭客户端
+    #[inline]
     pub fn shutdown(&self) {
         if self.shutdown_tx.receiver_count() > 0 && self.shutdown_tx.send(1).is_err() {
             tracing::error!("[TG] shutdown_tx.send failed");

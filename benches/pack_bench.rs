@@ -21,9 +21,20 @@ fn pack_pool() {
     } 
 }
 
+fn pack_set() {
+    let data = b"Hello world";
+
+    for i in 0..100_000 {
+        let mut p = tg::nw::pack::REQ_POOL.pull();
+        p.set(1, i + 1, data);
+        assert!(p.valid());
+    }
+}
+
 fn pack_benchmark(c: &mut Criterion) {
     c.bench_function("pack_raw", |b|b.iter(pack_raw));
     c.bench_function("pack_pool", |b|b.iter(pack_pool));
+    c.bench_function("pack_set", |b|b.iter(pack_set));
 }
 
 criterion_group!(benches, pack_benchmark);

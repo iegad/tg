@@ -87,6 +87,8 @@ unsafe impl Send for Package{}
 impl Package {
     /// 消息头长度
     pub const HEAD_SIZE: usize = 12;
+    /// 最大消息长度: 128M
+    pub const MAX_DATA_SIZE: usize = 1024 * 1024 * 128;
 
     /// 创建空 Package
     pub fn new() -> Self {
@@ -123,6 +125,7 @@ impl Package {
             }
         }
 
+        // 这里使用 copy_from_slice 而不是 extend_from_slice 是因为 copy_from_slice使用的是内存拷贝方式, 具有更好的性能.
         buf[..self.raw_pos].copy_from_slice(&self.raw[..self.raw_pos]);
         unsafe { buf.set_len(self.raw_pos); }
     }
@@ -214,12 +217,35 @@ impl Package {
         self.package_id() > 0 && self.idempotent() > 0 && self.raw_pos == self.raw_len()
     }
 
+    /// 设置所有字段
+    #[inline]
+    pub fn set(&mut self, package_id: u16, idempotent: u32, data: &[u8]) {
+        assert!(package_id > 0 && idempotent > 0);
+
+        let data_len = data.len();
+        assert!(data_len < Self::MAX_DATA_SIZE);
+
+        self.raw_pos = data_len + Self::HEAD_SIZE;
+
+        if self.raw_pos > self.raw.capacity() {
+            self.raw.resize(self.raw_pos, 0);
+        } else {
+            unsafe { self.raw.set_len(self.raw_pos); }
+        }
+
+        self.raw[0..2].copy_from_slice(&package_id.to_le_bytes());
+        self.raw[2..6].copy_from_slice(&idempotent.to_le_bytes());
+        self.raw[6..10].copy_from_slice(&(self.raw_pos as u32).to_le_bytes());
+        self.raw[12..self.raw_pos].copy_from_slice(data);
+        self.raw[10] = self.raw[0] ^ self.raw[9];
+        self.raw[11] = self.raw[0] ^ self.raw[self.raw_pos - 1];
+    }
+
     /// 设置 package_id
     #[inline(always)]
     pub fn set_package_id(&mut self, package_id: u16) {
         assert!(package_id > 0);
         self.raw[0..2].copy_from_slice(&package_id.to_le_bytes());
-        self.raw_pos = 12;
     }
 
     /// 获取 package_id
@@ -263,10 +289,14 @@ impl Package {
     #[inline]
     pub fn set_data(&mut self, data: &[u8]) {
         let data_len = data.len();
+        assert!(data_len < Self::MAX_DATA_SIZE);
+
         let raw_len = data_len + Self::HEAD_SIZE;
 
         if self.raw.capacity() < raw_len {
             self.raw.resize(raw_len, 0);
+        } else {
+            unsafe { self.raw.set_len(raw_len); }
         }
 
         let rawlen = raw_len as u32;
@@ -289,7 +319,7 @@ impl Package {
 
 impl Display for Package {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[package_id: {}; idempotent: {}; raw_len: {}; data: {:?}]", self.package_id(), self.idempotent(), self.raw_len(), self.data())
+        write!(f, "[package_id: {}; idempotent: {}; raw_len: {}; data: {}]", self.package_id(), self.idempotent(), self.raw_len(), hex::encode(self.data()))
     }
 }
 
