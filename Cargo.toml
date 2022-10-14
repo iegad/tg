@@ -46,7 +46,6 @@ rand = "0.8.5"
 serde = { version = "1.0.145", features = ["derive"] }
 time = { version = "0.3", features = ["macros"] }
 tokio = { version = "1.21.2", features = ["full", "tracing"] }
-tokio-io-timeout = "1.2.0"
 tokio-tungstenite = "0.17.2" # websocket for rust
 tonic = "0.8.1" # grpc for rust
 tonic-build = "0.8.0"
