@@ -9,15 +9,12 @@ use tokio::{
 
 async fn work(host: Arc<String>) {
     let mut cli = TcpStream::connect(&*host).await.unwrap();
-    let data = b"Hello world";
+    let data = b"1234567890";
 
     let (mut reader, mut writer) = cli.split();
     for i in 0..10000 {
         let mut req = REQ_POOL.pull();
-        req.set_package_id(1);
-        req.set_idempotent(i + 1);
-        req.set_data(data);
-        req.setup();
+        req.set(1, i + 1, data);
         
         let mut wbuf = WBUF_POOL.pull();
         req.to_bytes(&mut wbuf);
@@ -65,7 +62,7 @@ async fn main() {
     for _ in 0..100 {
         let v = host.clone();
         arr.push(tokio::spawn(async move {
-            work(v).await;
+            work(v).await;  
         }));
     }
 

@@ -13,3 +13,5 @@
 交叉编译 https://www.jianshu.com/p/6690476d4c3b
 
 cargo bench --bench map_bench
+
+使用 jemalloc 可以将分配空间的性能提升近一倍

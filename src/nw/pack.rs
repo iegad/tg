@@ -5,6 +5,7 @@ use std::{sync::Arc, fmt::Display};
 use type_layout::TypeLayout;
 
 // ---------------------------------------------------- 对象池 ----------------------------------------------------
+// 对象池使用的是低级的内存访问方式, 是以牺牲语言安全性的代价换来更好的性能
 //
 //
 lazy_static! {
@@ -12,10 +13,7 @@ lazy_static! {
     pub(crate) static ref PACK_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
 
     /// 该对象池用于向对端发送数据.
-    pub static ref WBUF_POOL: LinearObjectPool<Vec<u8>> = LinearObjectPool::new(
-        || vec![0u8; g::DEFAULT_BUF_SIZE],
-        |_v| {}
-    );
+    pub static ref WBUF_POOL: LinearObjectPool<Vec<u8>> = LinearObjectPool::new(|| Vec::with_capacity(2048), |_v| {});
 
     /// 该对象池用于处理 请求包
     pub static ref REQ_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
@@ -93,7 +91,14 @@ impl Package {
     /// 创建空 Package
     pub fn new() -> Self {
         Self { 
-            raw: vec![0; g::DEFAULT_BUF_SIZE],
+            raw: {
+                #[allow(clippy::uninit_vec)]
+                unsafe {
+                    let mut v = Vec::with_capacity(2048);
+                    v.set_len(2048);
+                    v
+                }
+            },
             raw_pos: 0,
         }
     }
@@ -101,10 +106,7 @@ impl Package {
     /// 跟据入参创建 有效 Package
     pub fn with_params(package_id: u16, idempotent: u32, data: &[u8]) -> Self {
         let mut res = Self::new();
-        res.set_package_id(package_id);
-        res.set_idempotent(idempotent);
-        res.set_data(data);
-        res.setup();
+        res.set(package_id, idempotent, data);
         res
     }
 
@@ -117,17 +119,14 @@ impl Package {
     /// 序列化到 buf中.
     #[inline(always)]
     pub fn to_bytes(&self, buf: &mut Vec<u8>) {
-        if buf.len() < self.raw_pos {
-            if buf.capacity() < self.raw_pos {
-                buf.resize(self.raw_pos, 0);
-            } else {
-                unsafe { buf.set_len(self.raw_pos); }
-            }
+        if buf.len() < self.raw_pos && buf.capacity() < self.raw_pos {
+            buf.reserve(self.raw_pos);
         }
 
-        // 这里使用 copy_from_slice 而不是 extend_from_slice 是因为 copy_from_slice使用的是内存拷贝方式, 具有更好的性能.
-        buf[..self.raw_pos].copy_from_slice(&self.raw[..self.raw_pos]);
-        unsafe { buf.set_len(self.raw_pos); }
+        unsafe {
+            std::ptr::copy(self.raw.as_ptr() , buf.as_mut_ptr(), self.raw_pos);
+            buf.set_len(self.raw_pos); 
+        }
     }
 
     /// 从buf中反序列化到当前package对象中.
@@ -146,7 +145,7 @@ impl Package {
                 nleft = buf_len;
             }
 
-            self.raw[self.raw_pos..self.raw_pos + nleft].copy_from_slice(&buf[..nleft]);
+            unsafe { std::ptr::copy(buf.as_ptr(), self.raw.as_mut_ptr().add(self.raw_pos), nleft); }
             self.raw_pos += nleft;
             buf_pos += nleft;
 
@@ -161,7 +160,11 @@ impl Package {
             let raw_len = self.raw_len();
             if buf_len > buf_pos /* buf 中还有多余的数据未读取 */ && self.raw_pos < raw_len /* 消息体没有读满 */ {
                 if self.raw.capacity() < raw_len {
-                    self.raw.resize(raw_len, 0);
+                    #[allow(clippy::uninit_vec)]
+                    unsafe {
+                        self.raw.reserve(raw_len);
+                        self.raw.set_len(raw_len); 
+                    }
                 }
 
                 let mut nleft = raw_len - self.raw_pos;
@@ -170,7 +173,9 @@ impl Package {
                     nleft = n;
                 }
     
-                self.raw[self.raw_pos..self.raw_pos + nleft].copy_from_slice(&buf[buf_pos.. buf_pos + nleft]);
+                unsafe { 
+                    std::ptr::copy(buf.as_ptr().add(buf_pos), self.raw.as_mut_ptr().add(self.raw_pos), nleft); 
+                }
                 self.raw_pos += nleft;
                 buf_pos += nleft;
 
@@ -228,15 +233,21 @@ impl Package {
         self.raw_pos = data_len + Self::HEAD_SIZE;
 
         if self.raw_pos > self.raw.capacity() {
-            self.raw.resize(self.raw_pos, 0);
-        } else {
-            unsafe { self.raw.set_len(self.raw_pos); }
+            #[allow(clippy::uninit_vec)]
+            unsafe {
+                self.raw.reserve(self.raw_pos);
+                self.raw.set_len(self.raw_pos); 
+            }
         }
 
-        self.raw[0..2].copy_from_slice(&package_id.to_le_bytes());
-        self.raw[2..6].copy_from_slice(&idempotent.to_le_bytes());
-        self.raw[6..10].copy_from_slice(&(self.raw_pos as u32).to_le_bytes());
-        self.raw[12..self.raw_pos].copy_from_slice(data);
+        unsafe {
+            let p = self.raw.as_mut_ptr();
+            std::ptr::copy(&package_id as *const u16 as *const u8, p, 2);
+            std::ptr::copy(&idempotent as *const u32 as *const u8, p.add(2), 4);
+            std::ptr::copy(&(self.raw_pos as u32) as *const u32 as *const u8, p.add(6), 4);
+            std::ptr::copy(data.as_ptr(), p.add(12), data_len);
+        }
+        
         self.raw[10] = self.raw[0] ^ self.raw[9];
         self.raw[11] = self.raw[0] ^ self.raw[self.raw_pos - 1];
     }
@@ -245,7 +256,7 @@ impl Package {
     #[inline(always)]
     pub fn set_package_id(&mut self, package_id: u16) {
         assert!(package_id > 0);
-        self.raw[0..2].copy_from_slice(&package_id.to_le_bytes());
+        unsafe { *(self.raw.as_mut_ptr() as *mut u16) = package_id; }
     }
 
     /// 获取 package_id
@@ -258,7 +269,7 @@ impl Package {
     #[inline(always)]
     pub fn set_idempotent(&mut self, idempotent: u32) {
         assert!(idempotent > 0);
-        self.raw[2..6].copy_from_slice(&idempotent.to_le_bytes());
+        unsafe { *(self.raw.as_mut_ptr().add(2) as *mut u32) = idempotent; }
     }
 
     /// 获取幂等
@@ -294,14 +305,14 @@ impl Package {
         let raw_len = data_len + Self::HEAD_SIZE;
 
         if self.raw.capacity() < raw_len {
-            self.raw.resize(raw_len, 0);
-        } else {
-            unsafe { self.raw.set_len(raw_len); }
+            self.raw.reserve(raw_len);
         }
 
-        let rawlen = raw_len as u32;
-        self.raw[6..10].copy_from_slice(&rawlen.to_le_bytes());
-        self.raw[Self::HEAD_SIZE..raw_len].copy_from_slice(data);
+        unsafe { 
+            *(self.raw.as_mut_ptr().add(6) as *mut u32) = raw_len as u32;
+            std::ptr::copy(data.as_ptr(), self.raw.as_mut_ptr().add(12), data_len);
+            self.raw.set_len(raw_len);
+        }
     }
 
     /// 获取消息体
