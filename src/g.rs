@@ -169,8 +169,8 @@ pub const DEFAULT_HOST: &str = "0.0.0.0:8080";
 /// 最大连接数
 pub const DEFAULT_MAX_CONNECTIONS: usize = 1000;
 /// 管道默认长度: 1000
-pub const DEFAULT_CHAN_SIZE: usize = 10000;
+pub const DEFAULT_CHAN_SIZE: usize = 20000;
 /// 默认读超时值 60秒
 pub const DEFAULT_READ_TIMEOUT: u64 = 60;
 /// 默认读缓冲区大小 1460
-pub const DEFAULT_BUF_SIZE: usize = 1460;
+pub const DEFAULT_BUF_SIZE: usize = 8 * 1024;

@@ -67,7 +67,7 @@ hashbrown = "0.12.3"
 codegen-units = 1
 opt-level = "s"
 lto = "fat"
-panic = "abort"
+# panic = "abort"
 
 [build]
 rustflags = ["-C target-cpu=native"]

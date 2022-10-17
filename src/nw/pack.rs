@@ -151,6 +151,8 @@ impl Package {
 
             // 检查 head_code
             if self.raw_pos == Self::HEAD_SIZE && (self.raw[0] ^ self.raw[9] != self.head_code() || self.package_id() == 0 || self.idempotent() == 0) {
+                tracing::debug!("head_code: {} <> {}", self.raw[0] ^ self.raw[9], self.head_code());
+                tracing::debug!("package_id: {}, idempotent: {}", self.package_id(), self.idempotent());
                 return Err(g::Err::PackHeadInvalid);
             }
         }

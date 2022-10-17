@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use pack::WBUF_POOL;
 use tg::{nw::pack::{self, RspBuf}, utils, make_wbuf};
+use tokio::{net::TcpSocket, io::{AsyncReadExt, AsyncWriteExt}};
 
 #[derive(Clone, Default)]
 struct EchoEvent;
@@ -34,5 +35,66 @@ impl tg::nw::server::IEvent for EchoEvent {
 #[tokio::main]
 async fn main() {
     utils::init_log();
-    tg::tcp_server_run!("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT, EchoEvent);
+    // tg::tcp_server_run!("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT, EchoEvent);
+
+    let listener = TcpSocket::new_v4().unwrap();
+    listener.set_reuseaddr(true).unwrap();
+
+    listener.bind("0.0.0.0:6688".parse().unwrap()).unwrap();
+    let listener = listener.listen(1024).unwrap();
+    tracing::debug!("开启监听...");
+
+    loop {
+        let (stream, _) = listener.accept().await.unwrap();
+
+        tokio::spawn(async move {
+            tracing::debug!("新的连接");
+            let (mut reader, mut writer) = stream.into_split();
+            let (tx, mut wx) = tokio::sync::broadcast::channel::<Vec<u8>>(tg::g::DEFAULT_CHAN_SIZE);
+            let mut buf = vec![0u8; tg::g::DEFAULT_BUF_SIZE];
+
+            let jhandler = tokio::spawn(async move {
+                'wx_loop: loop {
+                    let wbuf = match wx.recv().await {
+                        Ok(v) => v,
+                        Err(err) => {
+                            tracing::error!("wx.recv failed: {err}");
+                            break 'wx_loop;
+                        }
+                    };
+
+                    if let Err(err) = writer.write_all(&wbuf[..]).await {
+                        tracing::error!("write failed: {err}");
+                        break 'wx_loop;
+                    }
+                }
+            });
+
+            'read_loop: loop {
+                let n = match reader.read(&mut buf).await {
+                    Ok(0) => {
+                        tracing::info!("EOF.");
+                        break 'read_loop;
+                    }
+                    Ok(v) => v,
+                    Err(err) => {
+                        tracing::error!("{err}");
+                        break 'read_loop;
+                    }
+                };
+
+                if tx.receiver_count() > 0 { 
+                    let data = buf[..n].to_vec();
+                    if let Err(err) = tx.send(data) {
+                        tracing::error!("tx.send faild: {err}");
+                        break 'read_loop;
+                    }
+                }
+                
+            }
+
+            jhandler.await.unwrap();
+            tracing::debug!("连接断开");
+        });
+    }
 }
