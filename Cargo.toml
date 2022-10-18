@@ -36,11 +36,6 @@ name = "malloc"
 path = "benches/malloc.rs"
 harness = false
 
-[[bench]]
-name = "chan"
-path = "benches/chan.rs"
-harness = false
-
 [dependencies]
 async-channel = "1.7.1"
 async-trait = "0.1.57"
