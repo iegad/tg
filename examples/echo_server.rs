@@ -72,7 +72,6 @@ async fn main() {
             'read_loop: loop {
                 let n = match reader.read(&mut buf).await {
                     Ok(0) => {
-                        tracing::info!("EOF.");
                         break 'read_loop;
                     }
                     Ok(v) => v,
