@@ -50,15 +50,14 @@ async fn main() {
         tokio::spawn(async move {
             tracing::debug!("新的连接");
             let (mut reader, mut writer) = stream.into_split();
-            let (tx, mut wx) = tokio::sync::broadcast::channel::<Vec<u8>>(tg::g::DEFAULT_CHAN_SIZE);
+            let (tx, mut wx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
             let mut buf = vec![0u8; tg::g::DEFAULT_BUF_SIZE];
 
             let jhandler = tokio::spawn(async move {
                 'wx_loop: loop {
                     let wbuf = match wx.recv().await {
-                        Ok(v) => v,
-                        Err(err) => {
-                            tracing::error!("wx.recv failed: {err}");
+                        Some(v) => v,
+                        None => {
                             break 'wx_loop;
                         }
                     };
@@ -83,14 +82,11 @@ async fn main() {
                     }
                 };
 
-                if tx.receiver_count() > 0 { 
-                    let data = buf[..n].to_vec();
-                    if let Err(err) = tx.send(data) {
-                        tracing::error!("tx.send faild: {err}");
-                        break 'read_loop;
-                    }
+                let data = buf[..n].to_vec();
+                if let Err(err) = tx.send(data) {
+                    tracing::error!("tx.send faild: {err}");
+                    break 'read_loop;
                 }
-                
             }
 
             jhandler.await.unwrap();

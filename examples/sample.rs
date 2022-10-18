@@ -1,8 +1,20 @@
-use std::ptr;
+use std::{sync::Arc, fmt::Display};
+
+use lockfree_object_pool::{LinearObjectPool, LinearReusable};
+
 
 struct Person {
-    _name: String,
-    _age: u16,
+    name: String,
+    age: u16,
+}
+
+impl Person {
+    fn new() -> Self {
+        Self {
+            name: "".to_string(),
+            age: 0,
+        }
+    }
 }
 
 impl Drop for Person {
@@ -11,13 +23,33 @@ impl Drop for Person {
     }
 }
 
-fn main () {
-    let p = Box::new(Person{_name: "".to_string(), _age: 10});
-    
-    {
-        let p = Box::leak(p);
-        unsafe { ptr::drop_in_place(p as *mut Person); }
+impl Display for Person {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[name: {}, age: {}]\n", self.name, self.age)
     }
+}
+
+#[tokio::main]
+async fn main () {
+    let pool = Box::leak(Box::new(LinearObjectPool::new(Person::new, |v|{print!("BACKED: ----->>> {}", v)})));
     
-    println!("-------------------->>>");
+    let (tx, mut wx) = tokio::sync::broadcast::channel::<Arc<LinearReusable<Person>>>(10);
+
+    tokio::spawn(async move {
+        for _ in 0..1000 {
+            let p = Arc::new(pool.pull());
+            if let Err(err) = tx.send(p) {
+                println!("tx.send failed. {err}");
+                break;
+            }
+
+            println!("...");
+        }
+    });
+
+    while let Ok(p) = wx.recv().await {
+        print!("{}", **p);
+    }
+
+    println!("done");
 }

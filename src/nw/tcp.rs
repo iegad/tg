@@ -28,7 +28,7 @@ where
     T: super::server::IEvent,
     T::U: Default + Sync + Send,
 {
-    // step 1: init tcp listener.
+    // step 1: 初始化监听套接字
     let lfd = match TcpSocket::new_v4() {
         Err(err) => return Err(g::Err::SocketErr(format!("{err}"))),
         Ok(v) => v,
@@ -54,12 +54,12 @@ where
         Ok(v) => v,
     };
 
-    // step 2: change server's state to running.
+    // step 2: 改变server 运行状态
     if server.running.swap(true, Ordering::SeqCst) {
         return Err(g::Err::ServerIsAlreadyRunning);
     }
 
-    // step 3: get shutdown sender and receiver
+    // step 3: 获取关闭句柄
     let mut shutdown_rx = server.shutdown_tx.subscribe();
 
     // step 4: trigge server running event.
@@ -70,8 +70,8 @@ where
 
     'accept_loop: loop {
         let event = server.event.clone();
-        let shutdown = shutdown_rx.resubscribe();
-        let conn_item = conn_pool.pull();
+        let shutdown_receiver = shutdown_rx.resubscribe();
+        let conn = conn_pool.pull();
 
         select! {
             // when recv shutdown signal.
@@ -88,7 +88,7 @@ where
 
                 let permit = server.limit_connections.clone().acquire_owned().await.unwrap();
                 tokio::spawn(async move {
-                    conn_handle(stream, conn_item, timeout, shutdown, event, permit).await;
+                    conn_handle(stream, conn, timeout, shutdown_receiver, event, permit).await;
                 });
             }
         }
