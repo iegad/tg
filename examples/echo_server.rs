@@ -20,7 +20,12 @@ impl tg::nw::server::IEvent for EchoEvent {
         conn: &tg::nw::conn::ConnPtr<()>,
         req: &pack::Package,
     ) -> tg::g::Result<Option<pack::LinearItem>> {
-        assert_eq!(req.idempotent(), conn.recv_seq());
+        // assert_eq!(req.idempotent(), conn.recv_seq());
+
+        if conn.recv_seq() != req.idempotent() {
+            tracing::error!("[{:?}] idempotent: {} <> recv_seq: {}", conn.remote(), req.idempotent(), conn.recv_seq());
+        }
+
         tracing::debug!("{}", req);
         let mut rsp = RSP_POOL.pull();
         rsp.set(req.package_id(), req.idempotent(), req.data());
