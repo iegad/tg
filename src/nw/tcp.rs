@@ -1,6 +1,7 @@
-use super::{pack, server::Server, conn::{ConnPool, ConnItem}, client::Client};
-use crate::g;
+use super::{pack::{self, WBUF_POOL}, server::Server, conn::{ConnPool, ConnPtr}, client::Client};
+use crate::{g, nw::pack::PACK_POOL};
 use std::sync::{atomic::Ordering, Arc};
+use futures::StreamExt;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
@@ -71,7 +72,7 @@ where
     'accept_loop: loop {
         let event = server.event.clone();
         let shutdown_receiver = shutdown_rx.resubscribe();
-        let conn = conn_pool.pull();
+        let conn = Arc::new(conn_pool.pull());
 
         select! {
             // when recv shutdown signal.
@@ -123,126 +124,112 @@ where
 /// `event` IEvent implement.
 ///
 async fn conn_handle<T: super::server::IEvent>(
-    mut stream: TcpStream,
-    conn: ConnItem<T::U>,
+    stream: TcpStream,
+    conn: ConnPtr<T::U>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
     event: T,
     permit: OwnedSemaphorePermit,
 ) {
-    // step 1: active Conn<U>.
-    let (w_tx, mut w_rx, mut conn_shutdown_rx) = conn.setup(&stream);
-
     // step 2: get socket reader and writer
-    let (mut reader, mut writer) = stream.split();
+    let (mut reader, writer) = stream.into_split();
+    let (ptx, prx) = futures::channel::mpsc::unbounded();
+    let (stx, mut srx) = tokio::sync::broadcast::channel(1);
+    let stxc = stx.clone();
+    let mut input = PACK_POOL.pull();
+    let eventc = event.clone();
+    let connc = conn.clone();
+
+    let writer_future = tokio::spawn(async move {
+        conn_write_handle(connc, eventc, writer, prx, stxc).await;
+    });
 
     // step 3: timeout ticker.
-    let interval = if timeout == 0 {
-        std::time::Duration::from_secs(60 * 60)
-    } else {
-        std::time::Duration::from_secs(timeout)
-    };
+    let interval = if timeout == 0 { 60 * 60} else { timeout };
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
 
-    // step 4: get request instance.
-    let mut req = pack::PACK_POOL.pull();
+    'read_loop: loop {
+        ticker.reset();
 
-    // step 5: triger connected event.
-    if event.on_connected(&conn).await.is_err() {
-        return;
-    }
-
-    // step 6: conn_loop.
-    'conn_loop: loop {
         select! {
-            // server shutdown signal
-            _ = shutdown_rx.recv() => {
-                conn.shutdown();
-            }
-
-            // connection shutdown signal
-            _ = conn_shutdown_rx.recv() => {
-                break 'conn_loop;
-            }
-
-            // get response from write channel to write to remote.
-            result_wbuf = w_rx.recv() => {
-                let wbuf = match result_wbuf {
-                    Err(err) => {
-                        tracing::error!("[TG] wch recv failed: {:?}", err);
-                        break 'conn_loop;
+            _ = ticker.tick() => {
+                if timeout > 0 {
+                    event.on_error(&conn, g::Err::TcpReadTimeout).await;
+                    if let Err(err) = stx.send(1) {
+                        tracing::error!("stx.send failed: {err}");
                     }
-                    Ok(v) => v,
-                };
-
-                let result_write = match tokio::time::timeout(interval, writer.write_all(&wbuf)).await {
-                    Err(_) => {
-                        event.on_error(&conn, g::Err::TcpWriteTimeout).await;
-                        break 'conn_loop;
-                    }
-
-                    Ok(v) => v,
-                };
-
-                if let Err(err) = result_write {
-                    event.on_error(&conn, g::Err::TcpWriteFailed(format!("{err}"))).await;
-                    break 'conn_loop;
+                    break 'read_loop;
                 }
-
-                tracing::debug!("{:?}", hex::encode(&wbuf[..]));
-                conn.send_seq_incr();
             }
 
-            // connection read data.
-            result_timeout = tokio::time::timeout(interval, reader.read(conn.rbuf_mut())) => {
-                let result_read = match result_timeout {
-                    Err(_) => {
-                        event.on_error(&conn, g::Err::TcpReadTimeout).await;
-                        break 'conn_loop;
-                    }
+            _ = shutdown_rx.recv() => {
+                if let Err(err) = stx.send(1) {
+                    tracing::error!("stx.send failed: {err}");
+                }
+            }
 
-                    Ok(v) => v,
-                };
+            _ = srx.recv() => {
+                break 'read_loop;
+            }
 
-                let nread = match result_read {
+            result_read = reader.read(conn.rbuf_mut()) => {
+                let n = match result_read {
                     Err(err) => {
                         event.on_error(&conn, g::Err::TcpReadFailed(format!("{err}"))).await;
-                        break 'conn_loop;
+                        if let Err(err) = stx.send(1) {
+                            tracing::error!("stx.send failed: {err}");
+                        }
+                        break 'read_loop;
                     }
-                    Ok(0) => break 'conn_loop,
+
+                    Ok(0) => {
+                        if let Err(err) = stx.send(1) {
+                            tracing::error!("stx.send failed: {err}");
+                        }
+                        break 'read_loop;
+                    }
+
                     Ok(v) => v,
                 };
 
                 let mut consume = 0;
                 'pack_loop: loop {
-                    if req.valid() {
-                        if req.idempotent() > conn.idempotent() {
+                    if input.valid() {
+                        if input.idempotent() > conn.idempotent() {
                             conn.recv_seq_incr();
-                            let option_rsp = match event.on_process(&conn, &req).await {
-                                Err(_) => break 'conn_loop,
+                            let option_p = match event.on_process(&conn, &input).await { 
                                 Ok(v) => v,
+                                Err(_) => {
+                                    if let Err(err) = stx.send(1) {
+                                        tracing::error!("stx.send failed: {err}");
+                                    }
+                                    break 'read_loop;
+                                }
                             };
-
-                            conn.set_idempotent(req.idempotent());
-                            if let Some(rsp_bytes) = option_rsp {
-                                if let Err(err) = w_tx.send(rsp_bytes) {
-                                    tracing::error!("[TG] w_tx.send failed: {err}");
-                                    break 'conn_loop;
+    
+                            conn.set_idempotent(input.idempotent());
+                            if let Some(p) = option_p {
+                                if let Err(err) = ptx.unbounded_send(p) {
+                                    tracing::error!("ptx.unbounded_send failed: {err}");
                                 }
                             }
                         }
-                        
-                        req.reset();
+
+                        input.reset();
                     } else {
-                        consume += match req.from_bytes(&conn.rbuf()[consume..nread]) {
+                        consume += match input.from_bytes(&conn.rbuf()[consume..n]) {
                             Err(err) => {
                                 event.on_error(&conn, err).await;
-                                break 'conn_loop;
+                                if let Err(err) = stx.send(1) {
+                                    tracing::error!("stx.send failed: {err}");
+                                }
+                                break 'read_loop;
                             }
                             Ok(v) => v,
                         };
                     }
 
-                    if consume == nread && !req.valid() {
+                    if consume == n && !input.valid() {
                         break 'pack_loop;
                     }
                 }
@@ -250,142 +237,85 @@ async fn conn_handle<T: super::server::IEvent>(
         }
     }
 
-    // step 7: trigger disconnected event.
+    if let Err(err) = writer_future.await {
+        tracing::error!("conn[{:?}] process failed: {err}", conn.remote());
+    }
+
     drop(permit);
     event.on_disconnected(&conn).await;
     conn.reset();
+}
+
+async fn conn_write_handle<T: super::server::IEvent>(
+    conn: ConnPtr<T::U>,
+    event: T,
+    mut writer: tokio::net::tcp::OwnedWriteHalf, 
+    mut prx: futures::channel::mpsc::UnboundedReceiver<pack::LinearItem>, 
+    stx: tokio::sync::broadcast::Sender<u8>) {
+    
+    let mut rtx = stx.subscribe();
+    let mut wbuf = WBUF_POOL.pull();
+
+    'write_loop: loop {
+        select! {
+            _ = rtx.recv() => {
+                break 'write_loop;
+            }
+
+            option_out = prx.next() => {
+                if let Some(out) = option_out {
+                    out.to_bytes(&mut wbuf);
+                    if let Err(err) = writer.write_all(&wbuf[..]).await {
+                        event.on_error(&conn, g::Err::TcpWriteFailed(format!("{err}"))).await;
+
+                        if let Err(err) = stx.send(1) {
+                            tracing::error!("stx.send failed: {err}");
+                        }
+
+                        break 'write_loop;
+                    }
+                    conn.send_seq_incr();
+                }
+            }
+        }
+    }
 }
 
 
 // ---------------------------------------------- client run ----------------------------------------------
 //
 //
-pub async fn client_run<T: super::client::IEvent>(host: &'static str, cli: Arc<Client<T::U>>) {
-    let event = T::default();
+pub async fn client_run<T: super::client::IEvent>(_host: &'static str, _cli: Arc<Client<T::U>>) {
+    // let event = T::default();
 
-    let mut stream = match TcpStream::connect(host).await {
-        Err(err) => {
-            event
-                .on_error(&cli, g::Err::TcpConnectFailed(format!("{err}")))
-                .await;
-            return;
-        }
-        Ok(v) => v,
-    };
+    // let mut stream = match TcpStream::connect(host).await {
+    //     Err(err) => {
+    //         event
+    //             .on_error(&cli, g::Err::TcpConnectFailed(format!("{err}")))
+    //             .await;
+    //         return;
+    //     }
+    //     Ok(v) => v,
+    // };
 
-    if event.on_connected(&cli).is_err() {
-        return;
-    }
+    // if event.on_connected(&cli).is_err() {
+    //     return;
+    // }
 
-    let mut req = pack::REQ_POOL.pull();
-    let (
-        mut shutdown_rx, 
-        wbuf_consumer, 
-        w_tx, 
-        mut w_rx
-    ) = cli.setup(&mut stream);
-    let (mut reader, mut writer) = stream.split();
-    let interval = if cli.timeout() > 0 {
-        cli.timeout()
-    } else {
-        60 * 60
-    };
-    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
+    // let mut req = pack::REQ_POOL.pull();
+    // let (
+    //     mut shutdown_rx, 
+    //     wbuf_consumer, 
+    //     w_tx, 
+    //     mut w_rx
+    // ) = cli.setup(&mut stream);
+    // let (mut reader, mut writer) = stream.split();
+    // let interval = if cli.timeout() > 0 {
+    //     cli.timeout()
+    // } else {
+    //     60 * 60
+    // };
+    // let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
 
-    'cli_loop: loop {
-        select! {
-            // close client
-            _ = shutdown_rx.recv() => {
-                break 'cli_loop;
-            }
-
-            // timoeut
-            _ = ticker.tick() => {
-                if cli.timeout() > 0 {
-                    // TODO: ping
-                }
-            }
-
-            // response write
-            result_rsp = w_rx.recv() => {
-                let rsp = match result_rsp {
-                    Err(err) => {
-                        tracing::error!("{err}");
-                        break 'cli_loop;
-                    }
-                    Ok(v) => v,
-                };
-
-                if let Err(err) = writer.write_all(&rsp).await {
-                    event.on_error(&cli, g::Err::TcpWriteFailed(format!("{err}"))).await;
-                    break 'cli_loop;
-                }
-                cli.send_seq_incr();
-            }
-
-            // wbuf consumer
-            result_wbuf = wbuf_consumer.recv() => {
-                let wbuf = match result_wbuf {
-                    Err(err) => {
-                        tracing::error!("{err}");
-                        break 'cli_loop;
-                    }
-                    Ok(v) => v,
-                };
-
-                if w_tx.send(wbuf).is_err() {
-                    tracing::error!("[TG] w_tx send failed");
-                    break 'cli_loop;
-                }
-            }
-
-            // read package
-            result_read = reader.read(cli.rbuf_mut()) => {
-                let nread = match result_read {
-                    Err(err) => {
-                        event.on_error(&cli, g::Err::TcpReadFailed(format!("{err}"))).await;
-                        break 'cli_loop;
-                    }
-                    Ok(0) => break 'cli_loop,
-                    Ok(v) => v,
-                };
-
-                let mut consume = 0;
-                'pack_loop: loop {
-                    if req.valid() {
-                        cli.recv_seq_incr();
-                        tracing::debug!("[TG] Request's Raw: {}", hex::encode(req.raw()));
-                        let option_rspbuf = match event.on_process(&cli, &req).await {
-                            Err(_) => break 'cli_loop,
-                            Ok(v) => v,
-                        };
-
-                        cli.set_idempotent(req.idempotent());
-                        req.reset();
-                        if let Some(rspbuf) = option_rspbuf {
-                            if let Err(err) = w_tx.send(rspbuf) {
-                                tracing::error!("[TG] w_tx send failed: {err}");
-                                break 'cli_loop;
-                            }
-                        }
-                    } else {
-                        consume += match req.from_bytes(&cli.rbuf()[consume..nread]) {
-                            Err(err) => {
-                                event.on_error(&cli, err).await;
-                                cli.shutdown();
-                                break 'pack_loop;
-                            }
-                            Ok(v) => v,
-                        };
-                    }
-
-                    if consume == nread && !req.valid() {
-                        break 'pack_loop;
-                    }
-                }
-            }
-        }
-    }
-
-    event.on_disconnected(&cli);
+    // event.on_disconnected(&cli);
 }

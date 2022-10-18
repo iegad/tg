@@ -173,4 +173,4 @@ pub const DEFAULT_CHAN_SIZE: usize = 20000;
 /// 默认读超时值 60秒
 pub const DEFAULT_READ_TIMEOUT: u64 = 60;
 /// 默认读缓冲区大小 1460
-pub const DEFAULT_BUF_SIZE: usize = 64 * 1024;
+pub const DEFAULT_BUF_SIZE: usize = 1460;

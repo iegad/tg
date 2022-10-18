@@ -14,9 +14,9 @@ use super::{pack, Socket};
 /// # ConnPtr<T>
 /// 
 /// 会话端指针
-pub type ConnPtr<T> = Arc<Conn<T>>;
-pub type ConnItem<T> = LinearReusable<'static, ConnPtr<T>>;
-pub type ConnPool<T> = LinearObjectPool<ConnPtr<T>>;
+pub type ConnItem<T> = LinearReusable<'static, Conn<T>>;
+pub type ConnPool<T> = LinearObjectPool<Conn<T>>;
+pub type ConnPtr<T> = Arc<ConnItem<T>>;
 
 /// # Conn<U>
 ///
@@ -61,10 +61,6 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
         }
     }
 
-    pub(crate) fn new_arc() -> Arc<Self> {
-        Arc::new(Self::new())
-    }
-
     /// # Conn<U>::pool
     /// 
     /// 创建 Conn<U> 对象池
@@ -83,7 +79,7 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     /// }
     /// ```
     pub fn pool() -> ConnPool<U> {
-        LinearObjectPool::new(Self::new_arc, |v|v.reset())
+        LinearObjectPool::new(Self::new, |v|v.reset())
     }
 
     /// # Conn<U>.setup
@@ -97,7 +93,7 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     /// # Notes
     /// 
     /// 当会话端从对象池中被取出来时, 处于未激活状态, 未激活的会话端不能正常使用.
-    pub(crate) fn setup(
+    pub(crate) fn _setup(
         &self,
         stream: &TcpStream,
     ) -> (

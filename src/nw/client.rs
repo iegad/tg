@@ -2,7 +2,7 @@ use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc};
 use async_trait::async_trait;
 use tokio::{sync::broadcast, net::TcpStream};
 use crate::g;
-use super::{pack::{self, RspBuf}, Socket};
+use super::{Socket, pack};
 #[cfg(unix)]
 use std::os::unix::prelude::AsRawFd;
 #[cfg(windows)]
@@ -49,7 +49,7 @@ pub trait IEvent: Sync + Clone + Default + 'static {
         &self,
         cli: &Client<Self::U>,
         req: &pack::Package,
-    ) -> g::Result<RspBuf>;
+    ) -> g::Result<Option<pack::LinearItem>>;
 }
 
 // ---------------------------------------------- Client<T> ----------------------------------------------

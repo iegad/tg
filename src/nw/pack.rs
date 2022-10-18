@@ -32,10 +32,10 @@ lazy_static! {
 /// 而 LinearReusable<'static, BytesMut> 并没有实现 Clone特征, 所以这里需要在外围加上一层 Arc, 这样该类型数据才能在管道中间被传递.`
 pub type PackBuf = Arc<LinearReusable<'static, Vec<u8>>>;
 
-/// RspBuf 应答缓冲区
+/// RspPackage 应答缓冲区
 /// 
 /// Option<PackBuf> 的别名.
-pub type RspBuf = Option<PackBuf>;
+pub type LinearItem = LinearReusable<'static, Package>;
 
 
 /// Package 数据包, 用于网络传输.

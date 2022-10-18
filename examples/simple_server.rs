@@ -12,7 +12,7 @@ impl tg::nw::server::IEvent for SimpleEvent {
         &self,
         conn: &tg::nw::conn::ConnPtr<()>,
         req: &pack::Package,
-    ) -> tg::g::Result<Option<pack::PackBuf>> {
+    ) -> tg::g::Result<Option<pack::LinearItem>> {
         assert_eq!(req.idempotent(), conn.recv_seq());
         Ok(None)
     }

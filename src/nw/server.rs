@@ -71,7 +71,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
         &self,
         conn: &ConnPtr<Self::U>,
         req: &pack::Package,
-    ) -> g::Result<pack::RspBuf>;
+    ) -> g::Result<Option<pack::LinearItem>>;
 
     /// 服务端运行事件
     ///
