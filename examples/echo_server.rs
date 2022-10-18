@@ -1,7 +1,16 @@
 use async_trait::async_trait;
+use futures::StreamExt;
+use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 use pack::WBUF_POOL;
 use tg::{nw::pack::{self, RspBuf}, utils, make_wbuf};
 use tokio::{net::TcpSocket, io::{AsyncReadExt, AsyncWriteExt}};
+
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 #[derive(Clone, Default)]
 struct EchoEvent;
@@ -44,25 +53,27 @@ async fn main() {
     let listener = listener.listen(1024).unwrap();
     tracing::debug!("开启监听...");
 
+    lazy_static::lazy_static! {
+        static ref POOL: LinearObjectPool<Vec<u8>> = LinearObjectPool::new(||vec![0u8; tg::g::DEFAULT_BUF_SIZE], |_v|{});
+    }
+
     loop {
         let (stream, _) = listener.accept().await.unwrap();
 
         tokio::spawn(async move {
             tracing::debug!("新的连接");
             let (mut reader, mut writer) = stream.into_split();
-            let (tx, mut wx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+            let (tx, mut wx) = futures::channel::mpsc::unbounded::<LinearReusable<Vec<u8>>>();
             let mut buf = vec![0u8; tg::g::DEFAULT_BUF_SIZE];
 
             let jhandler = tokio::spawn(async move {
                 'wx_loop: loop {
-                    let wbuf = match wx.recv().await {
+                    let wbuf = match wx.next().await {
                         Some(v) => v,
-                        None => {
-                            break 'wx_loop;
-                        }
+                        None => break 'wx_loop,
                     };
 
-                    if let Err(err) = writer.write_all(&wbuf[..]).await {
+                    if let Err(err) = writer.write_all(&(*wbuf)[..]).await {
                         tracing::error!("write failed: {err}");
                         break 'wx_loop;
                     }
@@ -81,8 +92,17 @@ async fn main() {
                     }
                 };
 
-                let data = buf[..n].to_vec();
-                if let Err(err) = tx.send(data) {
+                let mut data = POOL.pull();
+                if data.capacity() < n {
+                    data.reserve(n);
+                }
+
+                unsafe { 
+                    std::ptr::copy(buf.as_ptr(), data.as_mut_ptr(), n);
+                    data.set_len(n); 
+                }
+
+                if let Err(err) = tx.unbounded_send(data) {
                     tracing::error!("tx.send faild: {err}");
                     break 'read_loop;
                 }

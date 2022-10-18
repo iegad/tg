@@ -11,7 +11,6 @@ fn vec_alloc() {
     for _ in 0..10000 {
         let v = vec![0u8; 65535];
         let _sum = v[0] + v[1];
-
     }
 }
 
