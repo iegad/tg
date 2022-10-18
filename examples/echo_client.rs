@@ -38,7 +38,6 @@ async fn work(host: Arc<String>) {
                     assert_eq!(std::str::from_utf8(pck.data()).unwrap(), std::str::from_utf8(DATA).unwrap());
 
                     if pck.idempotent() == 10000 {
-                        tracing::info!("done. :D, {}", DATA.len());
                         break 'read_loop;
                     }
                     

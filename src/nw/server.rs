@@ -24,7 +24,7 @@ use super::{pack, conn::ConnPtr};
 ///     // make IServerEvent::U => ().
 ///     type U = ();
 ///
-///     async fn on_process(&self, conn: &tg::nw::conn::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::PackBuf>> {
+///     async fn on_process(&self, conn: &tg::nw::conn::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::LinearItem>> {
 ///         println!("{:?} => {:?}", conn.remote(), req.data());
 ///         Ok(None)
 ///     }
@@ -167,7 +167,7 @@ impl<T: IEvent> Server<T> {
     /// impl tg::nw::server::IEvent for DemoEvent {
     ///     type U = ();
     ///
-    ///     async fn on_process(&self, conn: &tg::nw::conn::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::PackBuf>> {
+    ///     async fn on_process(&self, conn: &tg::nw::conn::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::LinearItem>> {
     ///         println!("{:?} => {:?}", conn.remote(), req.data());
     ///         Ok(None)
     ///     }

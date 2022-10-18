@@ -28,15 +28,13 @@ pub type ConnPtr<T> = Arc<ConnItem<T>>;
 pub struct Conn<U: Default + Send + Sync> {
     // block
     sockfd: Socket,
-    idempotent: u32, // 当前幂等, 用来确认消息是否过期
+    idempotent: u32,
     send_seq: u32,
     recv_seq: u32,
     remote: SocketAddr,
-    local: SocketAddr,
-    rbuf: Vec<u8>,               // read buffer
-    user_data: Option<U>,                          // user data
+    rbuf: Vec<u8>,
+    user_data: Option<U>,
     // contorller
-    wbuf_sender: broadcast::Sender<pack::PackBuf>, // socket 发送管道
     shutdown_sender: broadcast::Sender<u8>,        // 会话关闭管道
 }
 
@@ -45,7 +43,6 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     ///
     /// 创建默认的会话端实例, 该函数由框架内部调用, 用于 对象池的初始化
     fn new() -> Self {
-        let (wbuf_sender, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
         let (shutdown_sender, _) = broadcast::channel(1);
         Self {
             sockfd: 0,
@@ -53,10 +50,8 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
             send_seq: 0,
             recv_seq: 0,
             remote: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
-            local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
-            wbuf_sender,
             shutdown_sender,
-            rbuf: vec![0u8; g::DEFAULT_BUF_SIZE],
+            rbuf: vec![0; g::DEFAULT_BUF_SIZE],
             user_data: None,
         }
     }
@@ -96,11 +91,7 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     pub(crate) fn _setup(
         &self,
         stream: &TcpStream,
-    ) -> (
-        broadcast::Sender<pack::PackBuf>,   // io发送管道 sender
-        broadcast::Receiver<pack::PackBuf>, // io发送管道 receiver
-        broadcast::Receiver<u8>,            // 会话关闭管道 receiver
-    ) {
+    ) -> broadcast::Receiver<u8> {
         stream.set_nodelay(true).unwrap();
 
         unsafe {
@@ -112,16 +103,10 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
             { *v = stream.as_raw_socket(); }
     
             let remote = &self.remote as *const SocketAddr as *mut SocketAddr;
-            let local = &self.local as *const SocketAddr as *mut SocketAddr;
             *remote = stream.peer_addr().unwrap();
-            *local = stream.local_addr().unwrap();
         }
 
-        (
-            self.wbuf_sender.clone(),
-            self.wbuf_sender.subscribe(),
-            self.shutdown_sender.subscribe(),
-        )
+        self.shutdown_sender.subscribe()
     }
 
     /// # Conn<U>.reset
@@ -151,12 +136,6 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     #[inline(always)]
     pub fn remote(&self) -> &SocketAddr {
         &self.remote
-    }
-
-    /// 获取本端地址
-    #[inline(always)]
-    pub fn local(&self) -> &SocketAddr {
-        &self.local
     }
 
     /// 关闭会话端
@@ -236,16 +215,16 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
 
     /// 发送消息
     #[inline]
-    pub fn send(&self, data: pack::PackBuf) -> g::Result<()> {
-        if self.sockfd == 0 {
-            return Err(g::Err::ConnInvalid);
-        }
+    pub fn send(&self, _data: pack::PackBuf) -> g::Result<()> {
+        // if self.sockfd == 0 {
+        //     return Err(g::Err::ConnInvalid);
+        // }
 
-        if self.wbuf_sender.send(data).is_err() {
-            return Err(g::Err::TcpWriteFailed(
-                "wbuf_sender.send failed".to_string(),
-            ));
-        }
+        // if self.wbuf_sender.send(data).is_err() {
+        //     return Err(g::Err::TcpWriteFailed(
+        //         "wbuf_sender.send failed".to_string(),
+        //     ));
+        // }
 
         Ok(())
     }

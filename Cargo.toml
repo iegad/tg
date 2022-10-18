@@ -9,10 +9,6 @@ edition = "2021"
 # name = "gw"
 # path = "bin/gw/main.rs"
 
-[[example]]
-name = "chat_server"
-path = "examples/chat_server/main.rs"
-
 [dev-dependencies]
 criterion = "0.4.0"
 

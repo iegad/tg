@@ -132,16 +132,17 @@ async fn conn_handle<T: super::server::IEvent>(
     permit: OwnedSemaphorePermit,
 ) {
     // step 2: get socket reader and writer
+    let mut srx = conn._setup(&stream);
+    let srxc = srx.resubscribe();
     let (mut reader, writer) = stream.into_split();
-    let (ptx, prx) = futures::channel::mpsc::unbounded();
-    let (stx, mut srx) = tokio::sync::broadcast::channel(1);
-    let stxc = stx.clone();
+    let (mut ptx, prx) = futures::channel::mpsc::channel(g::DEFAULT_CHAN_SIZE);
+    
     let mut input = PACK_POOL.pull();
     let eventc = event.clone();
     let connc = conn.clone();
 
     let writer_future = tokio::spawn(async move {
-        conn_write_handle(connc, eventc, writer, prx, stxc).await;
+        conn_write_handle(connc, eventc, writer, prx, srxc).await;
     });
 
     // step 3: timeout ticker.
@@ -155,17 +156,13 @@ async fn conn_handle<T: super::server::IEvent>(
             _ = ticker.tick() => {
                 if timeout > 0 {
                     event.on_error(&conn, g::Err::TcpReadTimeout).await;
-                    if let Err(err) = stx.send(1) {
-                        tracing::error!("stx.send failed: {err}");
-                    }
+                    conn.shutdown();
                     break 'read_loop;
                 }
             }
 
             _ = shutdown_rx.recv() => {
-                if let Err(err) = stx.send(1) {
-                    tracing::error!("stx.send failed: {err}");
-                }
+                conn.shutdown();
             }
 
             _ = srx.recv() => {
@@ -176,16 +173,12 @@ async fn conn_handle<T: super::server::IEvent>(
                 let n = match result_read {
                     Err(err) => {
                         event.on_error(&conn, g::Err::TcpReadFailed(format!("{err}"))).await;
-                        if let Err(err) = stx.send(1) {
-                            tracing::error!("stx.send failed: {err}");
-                        }
+                        conn.shutdown();
                         break 'read_loop;
                     }
 
                     Ok(0) => {
-                        if let Err(err) = stx.send(1) {
-                            tracing::error!("stx.send failed: {err}");
-                        }
+                        conn.shutdown();
                         break 'read_loop;
                     }
 
@@ -200,17 +193,16 @@ async fn conn_handle<T: super::server::IEvent>(
                             let option_p = match event.on_process(&conn, &input).await { 
                                 Ok(v) => v,
                                 Err(_) => {
-                                    if let Err(err) = stx.send(1) {
-                                        tracing::error!("stx.send failed: {err}");
-                                    }
+                                    conn.shutdown();
                                     break 'read_loop;
                                 }
                             };
     
                             conn.set_idempotent(input.idempotent());
                             if let Some(p) = option_p {
-                                if let Err(err) = ptx.unbounded_send(p) {
+                                if let Err(err) = ptx.try_send(p) {
                                     tracing::error!("ptx.unbounded_send failed: {err}");
+                                    conn.shutdown();
                                 }
                             }
                         }
@@ -220,9 +212,7 @@ async fn conn_handle<T: super::server::IEvent>(
                         consume += match input.from_bytes(&conn.rbuf()[consume..n]) {
                             Err(err) => {
                                 event.on_error(&conn, err).await;
-                                if let Err(err) = stx.send(1) {
-                                    tracing::error!("stx.send failed: {err}");
-                                }
+                                conn.shutdown();
                                 break 'read_loop;
                             }
                             Ok(v) => v,
@@ -237,10 +227,7 @@ async fn conn_handle<T: super::server::IEvent>(
         }
     }
 
-    if let Err(err) = writer_future.await {
-        tracing::error!("conn[{:?}] process failed: {err}", conn.remote());
-    }
-
+    writer_future.await.unwrap();
     drop(permit);
     event.on_disconnected(&conn).await;
     conn.reset();
@@ -250,15 +237,14 @@ async fn conn_write_handle<T: super::server::IEvent>(
     conn: ConnPtr<T::U>,
     event: T,
     mut writer: tokio::net::tcp::OwnedWriteHalf, 
-    mut prx: futures::channel::mpsc::UnboundedReceiver<pack::LinearItem>, 
-    stx: tokio::sync::broadcast::Sender<u8>) {
+    mut prx: futures::channel::mpsc::Receiver<pack::LinearItem>, 
+    mut srx: tokio::sync::broadcast::Receiver<u8>) {
     
-    let mut rtx = stx.subscribe();
     let mut wbuf = WBUF_POOL.pull();
 
     'write_loop: loop {
         select! {
-            _ = rtx.recv() => {
+            _ = srx.recv() => {
                 break 'write_loop;
             }
 
@@ -267,11 +253,7 @@ async fn conn_write_handle<T: super::server::IEvent>(
                     out.to_bytes(&mut wbuf);
                     if let Err(err) = writer.write_all(&wbuf[..]).await {
                         event.on_error(&conn, g::Err::TcpWriteFailed(format!("{err}"))).await;
-
-                        if let Err(err) = stx.send(1) {
-                            tracing::error!("stx.send failed: {err}");
-                        }
-
+                        conn.shutdown();
                         break 'write_loop;
                     }
                     conn.send_seq_incr();
