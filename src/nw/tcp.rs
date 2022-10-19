@@ -138,10 +138,6 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     let mut srx = conn.setup(&reader, ptx);
     let srxc = srx.resubscribe();
     
-    
-    // let event = Box::leak(Box::new(event));
-
-    // let mut input = PACK_POOL.pull();
     let eventc = event.clone();
     let connc = conn.clone();
 
@@ -152,6 +148,10 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     // step 3: timeout ticker.
     let interval = if timeout == 0 { 60 * 60} else { timeout };
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
+
+    if let Err(_) = event.on_connected(&conn).await {
+        return;
+    }
 
     'read_loop: loop {
         ticker.reset();
@@ -238,6 +238,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
         }
     }
 
+    tracing::info!("[{:?}] read_handle done...", conn.sockfd());
     writer_future.await.unwrap();
     drop(permit);
     event.on_disconnected(&conn).await;

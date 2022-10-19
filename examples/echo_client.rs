@@ -87,7 +87,7 @@ async fn main() {
     let mut arr = Vec::new();
     let beg = utils::now_unix_micros();
     let host = Arc::new(std::env::args().nth(1).unwrap());
-    for _ in 0..5 {
+    for _ in 0..100 {
         let v = host.clone();
         arr.push(tokio::spawn(async move {
             work(v).await;  

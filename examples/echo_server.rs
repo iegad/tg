@@ -29,6 +29,11 @@ impl tg::nw::server::IEvent for EchoEvent {
         }
     }
 
+    async fn on_connected(&self, conn: &tg::nw::conn::ConnPtr<()>) -> tg::g::Result<()> {
+        tracing::info!("[{:?}] has connected", conn.remote());
+        Ok(())
+    }
+
     async fn on_disconnected(&self, conn: &tg::nw::conn::ConnPtr<()>) {
         tracing::info!(
             "[{:?} - {:?}] has disconnected: {}",
