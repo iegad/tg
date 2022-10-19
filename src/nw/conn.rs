@@ -2,11 +2,10 @@
 use std::os::unix::prelude::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::prelude::AsRawSocket;
-use std::{net::{SocketAddr, SocketAddrV4, Ipv4Addr}, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
-use tokio::{sync::broadcast, net::TcpStream};
+use tokio::{sync::broadcast};
 use crate::g;
-use super::{pack, Socket};
 
 // ---------------------------------------------- nw::Conn<U> ----------------------------------------------
 //
@@ -14,9 +13,9 @@ use super::{pack, Socket};
 /// # ConnPtr<T>
 /// 
 /// 会话端指针
-pub type ConnItem<T> = LinearReusable<'static, Conn<T>>;
-pub type ConnPool<T> = LinearObjectPool<Conn<T>>;
-pub type ConnPtr<T> = Arc<ConnItem<T>>;
+pub type ConnItem<'a, T> = LinearReusable<'static, Conn<'a, T>>;
+pub type ConnPool<'a, T> = LinearObjectPool<Conn<'a, T>>;
+pub type ConnPtr<'a, T> = Arc<ConnItem<'a, T>>;
 
 /// # Conn<U>
 ///
@@ -25,34 +24,32 @@ pub type ConnPtr<T> = Arc<ConnItem<T>>;
 /// # 泛型: U
 ///
 /// 用户自定义类型
-pub struct Conn<U: Default + Send + Sync> {
+pub struct Conn<'a, U: Default + Send + Sync + 'static> {
     // block
-    sockfd: Socket,
     idempotent: u32,
     send_seq: u32,
     recv_seq: u32,
-    remote: SocketAddr,
-    rbuf: Vec<u8>,
+    reader: Option<&'a tokio::net::tcp::OwnedReadHalf>,
     user_data: Option<U>,
     // contorller
     shutdown_sender: broadcast::Sender<u8>,        // 会话关闭管道
+    tx: Option<futures::channel::mpsc::Sender<LinearReusable<'static, Vec<u8>>>>,
 }
 
-impl<U: Default + Send + Sync + 'static> Conn<U> {
+impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     /// # Conn<U>::new
     ///
     /// 创建默认的会话端实例, 该函数由框架内部调用, 用于 对象池的初始化
     fn new() -> Self {
         let (shutdown_sender, _) = broadcast::channel(1);
         Self {
-            sockfd: 0,
             idempotent: 0,
             send_seq: 0,
             recv_seq: 0,
-            remote: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
+            reader: None,
             shutdown_sender,
-            rbuf: vec![0; g::DEFAULT_BUF_SIZE],
             user_data: None,
+            tx: None,
         }
     }
 
@@ -73,7 +70,7 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     ///     static ref CONN_POOL: tg::nw::conn::ConnPool<()> = tg::nw::conn::Conn::<()>::pool();
     /// }
     /// ```
-    pub fn pool() -> ConnPool<U> {
+    pub fn pool() -> ConnPool<'a, U> {
         LinearObjectPool::new(Self::new, |v|v.reset())
     }
 
@@ -88,24 +85,16 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     /// # Notes
     /// 
     /// 当会话端从对象池中被取出来时, 处于未激活状态, 未激活的会话端不能正常使用.
-    pub(crate) fn _setup(
+    pub(crate) fn setup(
         &self,
-        stream: &TcpStream,
+        reader: &'a tokio::net::tcp::OwnedReadHalf,
+        tx: futures::channel::mpsc::Sender<LinearReusable<'static, Vec<u8>>>
     ) -> broadcast::Receiver<u8> {
-        stream.set_nodelay(true).unwrap();
-
         unsafe {
-            let v = &self.sockfd as *const Socket as *mut Socket;
-            #[cfg(unix)]
-            { *v = stream.as_raw_fd(); }
-    
-            #[cfg(windows)]
-            { *v = stream.as_raw_socket(); }
-    
-            let remote = &self.remote as *const SocketAddr as *mut SocketAddr;
-            *remote = stream.peer_addr().unwrap();
+            let this = &mut *(self as *const Self as *mut Self);
+            this.reader = Some(reader);
+            this.tx = Some(tx);
         }
-
         self.shutdown_sender.subscribe()
     }
 
@@ -118,44 +107,38 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
 
-            this.sockfd = 0;
             this.idempotent = 0;
             this.send_seq = 0;
             this.recv_seq = 0;
             this.user_data = None;
+            this.reader = None;
         }
     }
 
     /// 获取原始套接字
     #[inline(always)]
     pub fn sockfd(&self) -> super::Socket {
-        self.sockfd
+        #[cfg(windows)]
+        {
+            self.reader.unwrap().as_ref().as_raw_socket()
+        }
+        #[cfg(unix)]
+        {
+            self.reader.unwrap().as_ref().as_raw_()
+        }
     }
 
     /// 获取对端地址
     #[inline(always)]
-    pub fn remote(&self) -> &SocketAddr {
-        &self.remote
+    pub fn remote(&self) -> SocketAddr {
+        self.reader.unwrap().peer_addr().unwrap()
     }
 
     /// 关闭会话端
     #[inline(always)]
     pub fn shutdown(&self) {
-        assert!(self.sockfd > 0);
+        assert!(self.reader.is_some());
         self.shutdown_sender.send(1).unwrap();
-    }
-
-    /// 获取读缓冲区
-    #[inline(always)]
-    #[allow(clippy::cast_ref_to_mut)]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn rbuf_mut(&self) -> &mut [u8] {
-        unsafe { &mut *(self.rbuf.as_ref() as *const [u8] as *mut [u8]) }
-    }
-
-    #[inline(always)]
-    pub(crate) fn rbuf(&self) -> &[u8] {
-        &self.rbuf
     }
 
     #[inline(always)]
@@ -164,7 +147,7 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
     }
 
     #[inline(always)]
-    pub(crate) fn set_idempotent(&self, idempotent: u32) {
+    pub fn set_idempotent(&self, idempotent: u32) {
         unsafe {
             let p = &self.idempotent as *const u32 as *mut u32;
             *p = idempotent;
@@ -179,7 +162,7 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
 
     /// 接收序列递增
     #[inline(always)]
-    pub(crate) fn recv_seq_incr(&self) {
+    pub(crate) fn _recv_seq_incr(&self) {
         unsafe {
             let p = &self.recv_seq as *const u32 as *mut u32;
             *p += 1;
@@ -215,23 +198,26 @@ impl<U: Default + Send + Sync + 'static> Conn<U> {
 
     /// 发送消息
     #[inline]
-    pub fn send(&self, _data: pack::PackBuf) -> g::Result<()> {
-        // if self.sockfd == 0 {
-        //     return Err(g::Err::ConnInvalid);
-        // }
+    pub fn send(&self, data: LinearReusable<'static, Vec<u8>>) -> g::Result<()> {
+        if let None = self.tx {
+            return Err(g::Err::ConnInvalid);
+        }
 
-        // if self.wbuf_sender.send(data).is_err() {
-        //     return Err(g::Err::TcpWriteFailed(
-        //         "wbuf_sender.send failed".to_string(),
-        //     ));
-        // }
+        unsafe {
+            let this = &mut *(self as *const Self as *mut Self);
+            if this.tx.as_mut().unwrap().try_send(data).is_err() {
+                return Err(g::Err::TcpWriteFailed(
+                    "wbuf_sender.send failed".to_string(),
+                ));
+            }
+        }
 
         Ok(())
     }
 }
 
-impl<U: Default + Sync + Send> Drop for Conn<U> {
+impl<'a, U: Default + Sync + Send> Drop for Conn<'a, U> {
     fn drop(&mut self) {
-        tracing::warn!("{} has released", self.sockfd);
+        tracing::warn!("{} has released", self.sockfd());
     }
 }

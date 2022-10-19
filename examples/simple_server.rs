@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use tg::{nw::pack, utils};
+use lockfree_object_pool::LinearReusable;
+use tg::utils;
 
 #[derive(Clone, Copy, Default)]
 struct SimpleEvent;
@@ -10,11 +11,11 @@ impl tg::nw::server::IEvent for SimpleEvent {
 
     async fn on_process(
         &self,
-        conn: &tg::nw::conn::ConnPtr<()>,
-        req: &pack::Package,
-    ) -> tg::g::Result<Option<pack::LinearItem>> {
-        assert_eq!(req.idempotent(), conn.recv_seq());
-        Ok(None)
+        _conn: &tg::nw::conn::ConnPtr<()>,
+        _req: LinearReusable<'static, Vec<u8>>,
+    ) -> tg::g::Result<()> {
+        // assert_eq!(req.idempotent(), conn.recv_seq());
+        Ok(())
     }
 
     async fn on_disconnected(&self, conn: &tg::nw::conn::ConnPtr<()>) {

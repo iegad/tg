@@ -64,10 +64,10 @@ pub struct Client<U: Default + Send + Sync> {
     timeout: u64,         // 读超时
     remote: SocketAddr,   // 对端地址
     local: SocketAddr,    // 本端地址
-    rbuf: Vec<u8>,        // 读缓冲区
+    _rbuf: Vec<u8>,        // 读缓冲区
     user_data: Option<U>, // 用户数据
     // controller
-    wbuf_consumer: async_channel::Receiver<pack::PackBuf>, // 消费者写管道
+    _wbuf_consumer: async_channel::Receiver<pack::PackBuf>, // 消费者写管道
     shutdown_tx: broadcast::Sender<u8>,                  // 客户端关闭管道
     wbuf_tx: broadcast::Sender<pack::PackBuf>,             // io 发送管道
 }
@@ -100,8 +100,8 @@ impl<U: Default + Send + Sync> Client<U> {
             timeout,
             remote: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
             local: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), 0)),
-            rbuf: vec![0u8; g::DEFAULT_BUF_SIZE],
-            wbuf_consumer,
+            _rbuf: vec![0u8; g::DEFAULT_BUF_SIZE],
+            _wbuf_consumer: wbuf_consumer,
             shutdown_tx,
             wbuf_tx,
             user_data,
@@ -176,7 +176,7 @@ impl<U: Default + Send + Sync> Client<U> {
     /// 
     /// 4, io 管道 receiver
     #[allow(clippy::cast_ref_to_mut)]
-    pub(crate) fn setup(&self, stream: &mut TcpStream) -> (
+    pub(crate) fn _setup(&self, stream: &mut TcpStream) -> (
         broadcast::Receiver<u8>,                // 关闭管道
         async_channel::Receiver<pack::PackBuf>, // 负载发送管道
         broadcast::Sender<pack::PackBuf>,       // io 写管道
@@ -196,7 +196,7 @@ impl<U: Default + Send + Sync> Client<U> {
             }
         }
 
-        (self.shutdown_tx.subscribe(), self.wbuf_consumer.clone(), self.wbuf_tx.clone(), self.wbuf_tx.subscribe())
+        (self.shutdown_tx.subscribe(), self._wbuf_consumer.clone(), self.wbuf_tx.clone(), self.wbuf_tx.subscribe())
     }
 
     /// 获取原始套接字
@@ -213,7 +213,7 @@ impl<U: Default + Send + Sync> Client<U> {
 
     /// 接收序列递增
     #[inline(always)]
-    pub(crate) fn recv_seq_incr(&self) {
+    pub(crate) fn _recv_seq_incr(&self) {
         unsafe {
             let p = &self.recv_seq as *const u32 as *mut u32;
             *p += 1;
@@ -228,7 +228,7 @@ impl<U: Default + Send + Sync> Client<U> {
 
     /// 发送序列递增
     #[inline(always)]
-    pub(crate) fn send_seq_incr(&self) {
+    pub(crate) fn _send_seq_incr(&self) {
         unsafe {
             let p = &self.send_seq as *const u32 as *mut u32;
             *p += 1;
@@ -243,7 +243,7 @@ impl<U: Default + Send + Sync> Client<U> {
 
     /// 设置幂等
     #[inline(always)]
-    pub(crate) fn set_idempotent(&self, idempotent: u32) {
+    pub(crate) fn _set_idempotent(&self, idempotent: u32) {
         unsafe {
             let p = &self.idempotent as *const u32 as *mut u32;
             *p = idempotent;
@@ -278,14 +278,14 @@ impl<U: Default + Send + Sync> Client<U> {
     #[inline(always)]
     #[allow(clippy::cast_ref_to_mut)]
     #[allow(clippy::mut_from_ref)]
-    pub(crate) fn rbuf_mut(&self) -> &mut [u8] {
-        unsafe{ &mut *(self.rbuf.as_ref() as *const [u8] as *mut [u8]) }
+    pub(crate) fn _rbuf_mut(&self) -> &mut [u8] {
+        unsafe{ &mut *(self._rbuf.as_ref() as *const [u8] as *mut [u8]) }
     }
 
     /// 获取读缓冲区
     #[inline(always)]
-    pub(crate) fn rbuf(&self) -> &[u8] {
-        &self.rbuf
+    pub(crate) fn _rbuf(&self) -> &[u8] {
+        &self._rbuf
     }
 
     /// 关闭客户端

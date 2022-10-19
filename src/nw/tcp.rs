@@ -1,7 +1,8 @@
-use super::{pack::{self, WBUF_POOL}, server::Server, conn::{ConnPool, ConnPtr}, client::Client};
-use crate::{g, nw::pack::PACK_POOL};
+use super::{pack::WBUF_POOL, server::Server, conn::{ConnPool, ConnPtr}, client::Client};
+use crate::g;
 use std::sync::{atomic::Ordering, Arc};
 use futures::StreamExt;
+use lockfree_object_pool::LinearReusable;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
@@ -21,9 +22,9 @@ use tokio::{
 /// `server` Arc<ServerPtr<T>> instance.
 ///
 /// `conn_pool` Conn<T::U> object pool.
-pub async fn server_run<T>(
+pub async fn server_run<'a, T>(
     server: Arc<Server<T>>,
-    conn_pool: &'static ConnPool<T::U>,
+    conn_pool: &'static ConnPool<'a, T::U>,
 ) -> g::Result<()>
 where
     T: super::server::IEvent,
@@ -123,21 +124,24 @@ where
 ///
 /// `event` IEvent implement.
 ///
-async fn conn_handle<T: super::server::IEvent>(
+async fn conn_handle<'a, T: super::server::IEvent>(
     stream: TcpStream,
-    conn: ConnPtr<T::U>,
+    conn: ConnPtr<'a, T::U>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
     event: T,
     permit: OwnedSemaphorePermit,
 ) {
     // step 2: get socket reader and writer
-    let mut srx = conn._setup(&stream);
-    let srxc = srx.resubscribe();
     let (mut reader, writer) = stream.into_split();
-    let (mut ptx, prx) = futures::channel::mpsc::channel(g::DEFAULT_CHAN_SIZE);
+    let (ptx, prx) = futures::channel::mpsc::channel(10000);
+    let mut srx = conn.setup(&reader, ptx);
+    let srxc = srx.resubscribe();
     
-    let mut input = PACK_POOL.pull();
+    
+    // let event = Box::leak(Box::new(event));
+
+    // let mut input = PACK_POOL.pull();
     let eventc = event.clone();
     let connc = conn.clone();
 
@@ -151,6 +155,7 @@ async fn conn_handle<T: super::server::IEvent>(
 
     'read_loop: loop {
         ticker.reset();
+        let mut rbuf = WBUF_POOL.pull();
 
         select! {
             _ = ticker.tick() => {
@@ -169,7 +174,7 @@ async fn conn_handle<T: super::server::IEvent>(
                 break 'read_loop;
             }
 
-            result_read = reader.read(conn.rbuf_mut()) => {
+            result_read = reader.read(&mut rbuf) => {
                 let n = match result_read {
                     Err(err) => {
                         event.on_error(&conn, g::Err::TcpReadFailed(format!("{err}"))).await;
@@ -185,44 +190,50 @@ async fn conn_handle<T: super::server::IEvent>(
                     Ok(v) => v,
                 };
 
-                let mut consume = 0;
-                'pack_loop: loop {
-                    if input.valid() {
-                        if input.idempotent() > conn.idempotent() {
-                            conn.recv_seq_incr();
-                            let option_p = match event.on_process(&conn, &input).await { 
-                                Ok(v) => v,
-                                Err(_) => {
-                                    conn.shutdown();
-                                    break 'read_loop;
-                                }
-                            };
+                unsafe { rbuf.set_len(n); }
+
+                if let Err(_) = event.on_process(&conn, rbuf).await {
+                    break 'read_loop;
+                };
+
+                // let mut consume = 0;
+                // 'pack_loop: loop {
+                //     if input.valid() {
+                //         if input.idempotent() > conn.idempotent() {
+                //             conn.recv_seq_incr();
+                //             let option_p = match event.on_process(&conn, &input).await { 
+                //                 Ok(v) => v,
+                //                 Err(_) => {
+                //                     conn.shutdown();
+                //                     break 'read_loop;
+                //                 }
+                //             };
     
-                            conn.set_idempotent(input.idempotent());
-                            if let Some(p) = option_p {
-                                if let Err(err) = ptx.try_send(p) {
-                                    tracing::error!("ptx.unbounded_send failed: {err}");
-                                    conn.shutdown();
-                                }
-                            }
-                        }
+                //             conn.set_idempotent(input.idempotent());
+                //             if let Some(p) = option_p {
+                //                 if let Err(err) = ptx.try_send(p) {
+                //                     tracing::error!("ptx.unbounded_send failed: {err}");
+                //                     conn.shutdown();
+                //                 }
+                //             }
+                //         }
 
-                        input.reset();
-                    } else {
-                        consume += match input.from_bytes(&conn.rbuf()[consume..n]) {
-                            Err(err) => {
-                                event.on_error(&conn, err).await;
-                                conn.shutdown();
-                                break 'read_loop;
-                            }
-                            Ok(v) => v,
-                        };
-                    }
+                //         input.reset();
+                //     } else {
+                //         consume += match input.from_bytes(&conn.rbuf()[consume..n]) {
+                //             Err(err) => {
+                //                 event.on_error(&conn, err).await;
+                //                 conn.shutdown();
+                //                 break 'read_loop;
+                //             }
+                //             Ok(v) => v,
+                //         };
+                //     }
 
-                    if consume == n && !input.valid() {
-                        break 'pack_loop;
-                    }
-                }
+                //     if consume == n && !input.valid() {
+                //         break 'pack_loop;
+                //     }
+                // }
             }
         }
     }
@@ -233,14 +244,12 @@ async fn conn_handle<T: super::server::IEvent>(
     conn.reset();
 }
 
-async fn conn_write_handle<T: super::server::IEvent>(
-    conn: ConnPtr<T::U>,
+async fn conn_write_handle<'a, T: super::server::IEvent>(
+    conn: ConnPtr<'a, T::U>,
     event: T,
     mut writer: tokio::net::tcp::OwnedWriteHalf, 
-    mut prx: futures::channel::mpsc::Receiver<pack::LinearItem>, 
+    mut prx: futures::channel::mpsc::Receiver<LinearReusable<'static, Vec<u8>>>, 
     mut srx: tokio::sync::broadcast::Receiver<u8>) {
-    
-    let mut wbuf = WBUF_POOL.pull();
 
     'write_loop: loop {
         select! {
@@ -250,8 +259,8 @@ async fn conn_write_handle<T: super::server::IEvent>(
 
             option_out = prx.next() => {
                 if let Some(out) = option_out {
-                    out.to_bytes(&mut wbuf);
-                    if let Err(err) = writer.write_all(&wbuf[..]).await {
+                    // out.to_bytes(&mut wbuf);
+                    if let Err(err) = writer.write_all(&out[..]).await {
                         event.on_error(&conn, g::Err::TcpWriteFailed(format!("{err}"))).await;
                         conn.shutdown();
                         break 'write_loop;

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
-use tg::{nw::pack::{self, RSP_POOL}, utils};
+use lockfree_object_pool::LinearReusable;
+use tg::utils;
 
 #[cfg(not(target_env = "msvc"))]
 use tikv_jemallocator::Jemalloc;
@@ -18,18 +19,10 @@ impl tg::nw::server::IEvent for EchoEvent {
     async fn on_process(
         &self,
         conn: &tg::nw::conn::ConnPtr<()>,
-        req: &pack::Package,
-    ) -> tg::g::Result<Option<pack::LinearItem>> {
-        // assert_eq!(req.idempotent(), conn.recv_seq());
-
-        if conn.recv_seq() != req.idempotent() {
-            tracing::error!("[{:?}] idempotent: {} <> recv_seq: {}", conn.remote(), req.idempotent(), conn.recv_seq());
-        }
-
-        tracing::debug!("{}", req);
-        let mut rsp = RSP_POOL.pull();
-        rsp.set(req.package_id(), req.idempotent(), req.data());
-        Ok(Some(rsp))
+        req: LinearReusable<'static, Vec<u8>>,
+    ) -> tg::g::Result<()> {
+        conn.send(req).unwrap();
+        Ok(())
     }
 
     async fn on_disconnected(&self, conn: &tg::nw::conn::ConnPtr<()>) {
@@ -37,7 +30,7 @@ impl tg::nw::server::IEvent for EchoEvent {
             "[{} - {:?}] has disconnected: {}",
             conn.sockfd(),
             conn.remote(),
-            conn.recv_seq()
+            conn.send_seq()
         );
     }
 }
@@ -45,5 +38,8 @@ impl tg::nw::server::IEvent for EchoEvent {
 #[tokio::main]
 async fn main() {
     utils::init_log();
+
+    tracing::info!("EchoEvent size is {}", std::mem::size_of::<EchoEvent>());
+
     tg::tcp_server_run!("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT, EchoEvent);
 }

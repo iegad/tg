@@ -1,8 +1,9 @@
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use async_trait::async_trait;
+use lockfree_object_pool::LinearReusable;
 use tokio::sync::{Semaphore, broadcast};
 use crate::g;
-use super::{pack, conn::ConnPtr};
+use super::conn::ConnPtr;
 
 // ---------------------------------------------- IServerEvent ----------------------------------------------
 //
@@ -70,8 +71,8 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     async fn on_process(
         &self,
         conn: &ConnPtr<Self::U>,
-        req: &pack::Package,
-    ) -> g::Result<Option<pack::LinearItem>>;
+        req: LinearReusable<'static, Vec<u8>>,
+    ) -> g::Result<()>;
 
     /// 服务端运行事件
     ///

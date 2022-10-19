@@ -13,7 +13,7 @@ lazy_static! {
     pub(crate) static ref PACK_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
 
     /// 该对象池用于向对端发送数据.
-    pub static ref WBUF_POOL: LinearObjectPool<Vec<u8>> = LinearObjectPool::new(|| Vec::with_capacity(2048), |_v| {});
+    pub static ref WBUF_POOL: LinearObjectPool<Vec<u8>> = LinearObjectPool::new(|| vec![0; 2048], |v| unsafe { v.set_len(2048); });
 
     /// 该对象池用于处理 请求包
     pub static ref REQ_POOL: LinearObjectPool<Package> = LinearObjectPool::new(Package::new, |v|v.reset());
