@@ -41,7 +41,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     ///
     /// 在会话端会读写出现错误时触发.
     async fn on_error(&self, conn: &ConnPtr<Self::U>, err: g::Err) {
-        tracing::error!("[{} - {:?}] => {err}", conn.sockfd(), conn.remote());
+        tracing::error!("[{:?} - {:?}] => {err}", conn.sockfd(), conn.remote());
     }
 
     /// 会话端连接成功事件
@@ -50,7 +50,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     ///
     /// 在会话端连接连接成功后触发.
     async fn on_connected(&self, conn: &ConnPtr<Self::U>) -> g::Result<()> {
-        tracing::debug!("[{} - {:?}] has connected", conn.sockfd(), conn.remote());
+        tracing::debug!("[{:?} - {:?}] has connected", conn.sockfd(), conn.remote());
         Ok(())
     }
 
@@ -60,7 +60,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     ///
     /// 在会话端连接断开后触发.
     async fn on_disconnected(&self, conn: &ConnPtr<Self::U>) {
-        tracing::debug!("[{} - {:?}] has disconnected", conn.sockfd(), conn.remote());
+        tracing::debug!("[{:?} - {:?}] has disconnected", conn.sockfd(), conn.remote());
     }
 
     /// 会话端消息事件

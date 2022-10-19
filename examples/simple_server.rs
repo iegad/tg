@@ -20,7 +20,7 @@ impl tg::nw::server::IEvent for SimpleEvent {
 
     async fn on_disconnected(&self, conn: &tg::nw::conn::ConnPtr<()>) {
         tracing::debug!(
-            "[{}|{:?}] has disconnected: {}",
+            "[{:?}|{:?}] has disconnected: {}",
             conn.sockfd(),
             conn.remote(),
             conn.recv_seq()

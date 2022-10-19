@@ -99,15 +99,15 @@ pub enum Err {
     TcpGetLocalAddrFailed,
 
     /// tcp::Conn 读超时
-    TcpReadTimeout,
+    IOReadTimeout,
 
-    TcpWriteTimeout,
+    IOWriteTimeout,
 
     /// TcpStream::read 调用失败, 附加值为错误详情
-    TcpReadFailed(String),
+    IOReadFailed(String),
 
     /// TcpStream::write_all 调用失败, 附加值为错误详情
-    TcpWriteFailed(String),
+    IOWriteFailed(String),
 
     /// 设置套接字选项失败
     TcpSetOptionFailed(&'static str),

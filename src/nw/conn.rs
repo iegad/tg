@@ -33,7 +33,7 @@ pub struct Conn<'a, U: Default + Send + Sync + 'static> {
     user_data: Option<U>,
     // contorller
     shutdown_sender: broadcast::Sender<u8>,        // 会话关闭管道
-    tx: Option<futures::channel::mpsc::Sender<LinearReusable<'static, Vec<u8>>>>,
+    tx: Option<futures::channel::mpsc::UnboundedSender<LinearReusable<'static, Vec<u8>>>>,
 }
 
 impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
@@ -88,7 +88,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     pub(crate) fn setup(
         &self,
         reader: &'a tokio::net::tcp::OwnedReadHalf,
-        tx: futures::channel::mpsc::Sender<LinearReusable<'static, Vec<u8>>>
+        tx: futures::channel::mpsc::UnboundedSender<LinearReusable<'static, Vec<u8>>>
     ) -> broadcast::Receiver<u8> {
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
@@ -117,21 +117,40 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
 
     /// 获取原始套接字
     #[inline(always)]
-    pub fn sockfd(&self) -> super::Socket {
-        #[cfg(windows)]
-        {
-            self.reader.unwrap().as_ref().as_raw_socket()
-        }
-        #[cfg(unix)]
-        {
-            self.reader.unwrap().as_ref().as_raw_()
+    pub fn sockfd(&self) -> Option<super::Socket> {
+        if let Some(r) = self.reader {
+            #[cfg(windows)]
+            { Some(r.as_ref().as_raw_socket())}
+            #[cfg(unix)]
+            { Some(r.as_ref().as_raw_fd()) }    
+        } else {
+            None
         }
     }
 
     /// 获取对端地址
     #[inline(always)]
-    pub fn remote(&self) -> SocketAddr {
-        self.reader.unwrap().peer_addr().unwrap()
+    pub fn remote(&self) -> Option<SocketAddr> {
+        if let Some(r) = self.reader {
+            match r.as_ref().peer_addr() {
+                Err(err) => { 
+                    tracing::error!("get remote failed: {err}");
+                    None
+                }
+                Ok(v) => Some(v),
+            } 
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    pub fn local(&self) -> Option<SocketAddr> {
+        if let Some(r) = self.reader {
+            Some(r.as_ref().local_addr().unwrap())
+        } else {
+            None
+        }
     }
 
     /// 关闭会话端
@@ -205,10 +224,8 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
 
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
-            if this.tx.as_mut().unwrap().try_send(data).is_err() {
-                return Err(g::Err::TcpWriteFailed(
-                    "wbuf_sender.send failed".to_string(),
-                ));
+            if let Err(err) = this.tx.as_mut().unwrap().unbounded_send(data) {
+                return Err(g::Err::IOWriteFailed(format!("conn.send failed: {err}")));
             }
         }
 
@@ -218,6 +235,6 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
 
 impl<'a, U: Default + Sync + Send> Drop for Conn<'a, U> {
     fn drop(&mut self) {
-        tracing::warn!("{} has released", self.sockfd());
+        tracing::warn!("{:?} has released", self.sockfd());
     }
 }

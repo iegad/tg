@@ -134,7 +134,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
 ) {
     // step 2: get socket reader and writer
     let (mut reader, writer) = stream.into_split();
-    let (ptx, prx) = futures::channel::mpsc::channel(10000);
+    let (ptx, prx) = futures::channel::mpsc::unbounded();
     let mut srx = conn.setup(&reader, ptx);
     let srxc = srx.resubscribe();
     
@@ -160,7 +160,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
         select! {
             _ = ticker.tick() => {
                 if timeout > 0 {
-                    event.on_error(&conn, g::Err::TcpReadTimeout).await;
+                    event.on_error(&conn, g::Err::IOReadTimeout).await;
                     conn.shutdown();
                     break 'read_loop;
                 }
@@ -177,7 +177,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
             result_read = reader.read(&mut rbuf) => {
                 let n = match result_read {
                     Err(err) => {
-                        event.on_error(&conn, g::Err::TcpReadFailed(format!("{err}"))).await;
+                        event.on_error(&conn, g::Err::IOReadFailed(format!("{err}"))).await;
                         conn.shutdown();
                         break 'read_loop;
                     }
@@ -248,7 +248,7 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
     conn: ConnPtr<'a, T::U>,
     event: T,
     mut writer: tokio::net::tcp::OwnedWriteHalf, 
-    mut prx: futures::channel::mpsc::Receiver<LinearReusable<'static, Vec<u8>>>, 
+    mut prx: futures::channel::mpsc::UnboundedReceiver<LinearReusable<'static, Vec<u8>>>, 
     mut srx: tokio::sync::broadcast::Receiver<u8>) {
 
     'write_loop: loop {
@@ -261,7 +261,7 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
                 if let Some(out) = option_out {
                     // out.to_bytes(&mut wbuf);
                     if let Err(err) = writer.write_all(&out[..]).await {
-                        event.on_error(&conn, g::Err::TcpWriteFailed(format!("{err}"))).await;
+                        event.on_error(&conn, g::Err::IOWriteFailed(format!("{err}"))).await;
                         conn.shutdown();
                         break 'write_loop;
                     }

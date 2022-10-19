@@ -21,13 +21,17 @@ impl tg::nw::server::IEvent for EchoEvent {
         conn: &tg::nw::conn::ConnPtr<()>,
         req: LinearReusable<'static, Vec<u8>>,
     ) -> tg::g::Result<()> {
-        conn.send(req).unwrap();
-        Ok(())
+        if let Err(err) = conn.send(req) {
+            tracing::error!("on_process: {err}");
+            Err(tg::g::Err::Custom("DOS".to_string()))
+        } else {
+            Ok(())
+        }
     }
 
     async fn on_disconnected(&self, conn: &tg::nw::conn::ConnPtr<()>) {
         tracing::info!(
-            "[{} - {:?}] has disconnected: {}",
+            "[{:?} - {:?}] has disconnected: {}",
             conn.sockfd(),
             conn.remote(),
             conn.send_seq()
@@ -41,5 +45,5 @@ async fn main() {
 
     tracing::info!("EchoEvent size is {}", std::mem::size_of::<EchoEvent>());
 
-    tg::tcp_server_run!("0.0.0.0:6688", 100, tg::g::DEFAULT_READ_TIMEOUT, EchoEvent);
+    tg::tcp_server_run!("0.0.0.0:6688", 100, 0, EchoEvent);
 }
