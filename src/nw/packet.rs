@@ -49,26 +49,32 @@ impl Packet {
         Self(raw)
     }
 
+    #[inline(always)]
     pub fn id(&self) -> u16 {
         unsafe { *(self.0.as_ptr().add(2) as *const u16) }
     }
 
+    #[inline(always)]
     pub fn idempotent(&self) -> u32 {
         unsafe { *(self.0.as_ptr().add(4) as *const u32) }
     }
 
+    #[inline(always)]
     pub fn raw_len(&self) -> usize {
         unsafe { *(self.0.as_ptr().add(8) as *const u32) as usize }
     }
 
+    #[inline(always)]
     pub fn raw(&self) -> &[u8] {
         &self.0
     }
 
+    #[inline(always)]
     pub fn data(&self) -> &[u8] {
         &self.0[Self::HEAD_SIZE..]
     }
 
+    #[inline(always)]
     pub fn valid(&self) -> bool {
         let rl = self.0.len();
 
@@ -82,14 +88,17 @@ impl Packet {
         }
     }
     
+    #[inline(always)]
     pub fn set_id(&mut self, id: u16) {
         unsafe { *(self.0.as_mut_ptr().add(2) as *mut u16) = id }
     }
 
+    #[inline(always)]
     pub fn set_idempotent(&mut self, idempotent: u32) {
         unsafe { *(self.0.as_mut_ptr().add(4) as *mut u32) = idempotent }
     }
 
+    #[inline(always)]
     pub fn set_data(&mut self, data: &[u8]) {
         let dl = data.len(); 
         if dl == 0 {
@@ -111,11 +120,13 @@ impl Packet {
         }
     }
 
+    #[inline(always)]
     pub fn setup(&mut self) {
         self.0[0] = self.0[2] ^ self.0[11];
         self.0[1] = self.0[2] ^ self.0[self.raw_len() - 1];
     }
 
+    #[inline(always)]
     pub fn set(&mut self, id: u16, idempotent: u32, data: &[u8]) {
         let dl = data.len();
         assert!(dl <= Self::MAX_DATA_SIZE);
@@ -140,15 +151,17 @@ impl Packet {
         self.0[1] = self.0[2] ^ self.0[rl - 1];
     }
 
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         unsafe { self.0.set_len(0); }
     }
 
+    #[inline(always)]
     pub(crate) fn check_hc(&self) -> bool {
         let p = self.0.as_ptr();
         unsafe { *p == *p.add(2) ^ *p.add(11) }
     }
 
+    #[inline(always)]
     pub(crate) fn check_rc(&self) -> bool {
         let p = self.0.as_ptr();
         unsafe { *p.add(1) == *p.add(2) ^ *p.add(self.0.len() - 1) }

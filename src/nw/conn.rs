@@ -90,6 +90,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         reader: &'a tokio::net::tcp::OwnedReadHalf,
         tx: futures::channel::mpsc::UnboundedSender<super::server::Pack>
     ) -> broadcast::Receiver<u8> {
+        reader.as_ref().set_nodelay(true).unwrap();
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
             this.reader = Some(reader);
