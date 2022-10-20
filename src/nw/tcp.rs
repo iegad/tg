@@ -1,8 +1,7 @@
-use super::{pack::WBUF_POOL, server::Server, conn::{ConnPool, ConnPtr}, client::Client};
-use crate::g;
+use super::{server::Server, conn::{ConnPool, ConnPtr}, packet::{self, WBUF_POOL}};
+use crate::{g, nw::packet::PacketResult};
 use std::sync::{atomic::Ordering, Arc};
 use futures::StreamExt;
-use lockfree_object_pool::LinearReusable;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
@@ -137,6 +136,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     let (ptx, prx) = futures::channel::mpsc::unbounded();
     let mut srx = conn.setup(&reader, ptx);
     let srxc = srx.resubscribe();
+    let mut builder = packet::Builder::new();
     
     let eventc = event.clone();
     let connc = conn.clone();
@@ -148,6 +148,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     // step 3: timeout ticker.
     let interval = if timeout == 0 { 60 * 60} else { timeout };
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
+    let mut rbuf = WBUF_POOL.pull();
 
     if let Err(_) = event.on_connected(&conn).await {
         return;
@@ -155,7 +156,6 @@ async fn conn_handle<'a, T: super::server::IEvent>(
 
     'read_loop: loop {
         ticker.reset();
-        let mut rbuf = WBUF_POOL.pull();
 
         select! {
             _ = ticker.tick() => {
@@ -190,55 +190,31 @@ async fn conn_handle<'a, T: super::server::IEvent>(
                     Ok(v) => v,
                 };
 
-                unsafe { rbuf.set_len(n); }
+                'pack_loop: loop {
+                    let (pack, done) = match builder.parse(&rbuf[..n]) {
+                        PacketResult::None => break 'pack_loop,
+                        PacketResult::Err(err) => {
+                            event.on_error(&conn, err).await;
+                            break 'read_loop;
+                        }
+                        PacketResult::Next(v) => (v, false),
+                        PacketResult::Last(v) => (v, true),
+                    };
 
-                if let Err(_) = event.on_process(&conn, rbuf).await {
-                    break 'read_loop;
-                };
+                    conn.recv_seq_incr();
+                    conn.set_idempotent(pack.idempotent());
+                    if let Err(_) = event.on_process(&conn, pack).await {
+                        break 'read_loop;
+                    }
 
-                // let mut consume = 0;
-                // 'pack_loop: loop {
-                //     if input.valid() {
-                //         if input.idempotent() > conn.idempotent() {
-                //             conn.recv_seq_incr();
-                //             let option_p = match event.on_process(&conn, &input).await { 
-                //                 Ok(v) => v,
-                //                 Err(_) => {
-                //                     conn.shutdown();
-                //                     break 'read_loop;
-                //                 }
-                //             };
-    
-                //             conn.set_idempotent(input.idempotent());
-                //             if let Some(p) = option_p {
-                //                 if let Err(err) = ptx.try_send(p) {
-                //                     tracing::error!("ptx.unbounded_send failed: {err}");
-                //                     conn.shutdown();
-                //                 }
-                //             }
-                //         }
-
-                //         input.reset();
-                //     } else {
-                //         consume += match input.from_bytes(&conn.rbuf()[consume..n]) {
-                //             Err(err) => {
-                //                 event.on_error(&conn, err).await;
-                //                 conn.shutdown();
-                //                 break 'read_loop;
-                //             }
-                //             Ok(v) => v,
-                //         };
-                //     }
-
-                //     if consume == n && !input.valid() {
-                //         break 'pack_loop;
-                //     }
-                // }
+                    if done {
+                        break 'pack_loop;
+                    }
+                }
             }
         }
     }
 
-    tracing::info!("[{:?}] read_handle done...", conn.sockfd());
     writer_future.await.unwrap();
     drop(permit);
     event.on_disconnected(&conn).await;
@@ -249,7 +225,7 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
     conn: ConnPtr<'a, T::U>,
     event: T,
     mut writer: tokio::net::tcp::OwnedWriteHalf, 
-    mut prx: futures::channel::mpsc::UnboundedReceiver<LinearReusable<'static, Vec<u8>>>, 
+    mut prx: futures::channel::mpsc::UnboundedReceiver<super::server::Pack>, 
     mut srx: tokio::sync::broadcast::Receiver<u8>) {
 
     'write_loop: loop {
@@ -261,7 +237,7 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
             option_out = prx.next() => {
                 if let Some(out) = option_out {
                     // out.to_bytes(&mut wbuf);
-                    if let Err(err) = writer.write_all(&out[..]).await {
+                    if let Err(err) = writer.write_all(out.raw()).await {
                         event.on_error(&conn, g::Err::IOWriteFailed(format!("{err}"))).await;
                         conn.shutdown();
                         break 'write_loop;
@@ -271,43 +247,4 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
             }
         }
     }
-}
-
-
-// ---------------------------------------------- client run ----------------------------------------------
-//
-//
-pub async fn client_run<T: super::client::IEvent>(_host: &'static str, _cli: Arc<Client<T::U>>) {
-    // let event = T::default();
-
-    // let mut stream = match TcpStream::connect(host).await {
-    //     Err(err) => {
-    //         event
-    //             .on_error(&cli, g::Err::TcpConnectFailed(format!("{err}")))
-    //             .await;
-    //         return;
-    //     }
-    //     Ok(v) => v,
-    // };
-
-    // if event.on_connected(&cli).is_err() {
-    //     return;
-    // }
-
-    // let mut req = pack::REQ_POOL.pull();
-    // let (
-    //     mut shutdown_rx, 
-    //     wbuf_consumer, 
-    //     w_tx, 
-    //     mut w_rx
-    // ) = cli.setup(&mut stream);
-    // let (mut reader, mut writer) = stream.split();
-    // let interval = if cli.timeout() > 0 {
-    //     cli.timeout()
-    // } else {
-    //     60 * 60
-    // };
-    // let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
-
-    // event.on_disconnected(&cli);
 }

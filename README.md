@@ -15,3 +15,5 @@
 cargo bench --bench map_bench
 
 使用 jemalloc 可以将分配空间的性能提升近一倍
+
+cargo test [ut-name]

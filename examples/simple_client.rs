@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use futures_util::future;
-use tg::{nw::pack::WBUF_POOL, utils};
+use tg::utils;
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 
 async fn work(host: Arc<String>) {
@@ -11,10 +11,8 @@ async fn work(host: Arc<String>) {
 
     let (_, mut writer) = cli.split();
     for i in 0..10000 {
-        let req = tg::nw::pack::Package::with_params(1, i + 1, data);
-        let mut wbuf = WBUF_POOL.pull();
-        req.to_bytes(&mut wbuf);
-        if let Err(err) = writer.write_all(&wbuf).await {
+        let req = tg::nw::packet::Packet::with(1, i + 1, data);
+        if let Err(err) = writer.write_all(req.raw()).await {
             println!("write failed: {:?}", err);
             break;
         }

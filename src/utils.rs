@@ -51,19 +51,6 @@ pub fn now_unix_micros() -> u128 {
         .as_micros()
 }
 
-#[inline]
-pub fn bytes_to_hex(data: &[u8]) -> String {
-    hex::encode(data)
-}
-
-#[inline]
-pub fn hex_to_bytes(data: &str) -> g::Result<Vec<u8>> {
-    match hex::decode(data) {
-        Err(_) => Err(g::Err::UtilsHexStr),
-        Ok(v) => Ok(v),
-    }
-}
-
 pub fn init_log_with_path(path: &str) {
     use tracing_appender::rolling;
     use tracing_subscriber::fmt::writer::MakeWriterExt;

@@ -1,9 +1,10 @@
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use async_trait::async_trait;
-use lockfree_object_pool::LinearReusable;
 use tokio::sync::{Semaphore, broadcast};
 use crate::g;
-use super::conn::ConnPtr;
+use super::{conn::ConnPtr, packet};
+
+pub type Pack = packet::LinearItem;
 
 // ---------------------------------------------- IServerEvent ----------------------------------------------
 //
@@ -68,11 +69,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     /// # 触发
     ///
     /// 在会话端成功解析消息后触发.
-    async fn on_process(
-        &self,
-        conn: &ConnPtr<Self::U>,
-        req: LinearReusable<'static, Vec<u8>>,
-    ) -> g::Result<()>;
+    async fn on_process(&self, conn: &ConnPtr<Self::U>, req: Pack) -> g::Result<()>;
 
     /// 服务端运行事件
     ///
@@ -80,12 +77,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     ///
     /// 在服务端开启监听之前触发.
     async fn on_running(&self, server: &Arc<Server<Self>>) {
-        tracing::debug!(
-            "server[ HOST:({}) | MAX:({}) | TIMOUT:({}) ] is running...",
-            server.host,
-            server.max_connections,
-            server.timeout
-        );
+        tracing::debug!("server[ HOST:({}) | MAX:({}) | TIMOUT:({}) ] is running...", server.host, server.max_connections, server.timeout);
     }
 
     /// 服务端停止事件

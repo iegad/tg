@@ -1,26 +1,29 @@
 use std::sync::Arc;
 use futures_util::future;
-use tg::{g, nw::pack::{REQ_POOL, RSP_POOL, WBUF_POOL}, utils};
+use tg::{g, utils, nw::packet::{REQ_POOL, PacketResult}};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
 
-static DATA: &[u8] = b"12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012341234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012";
+static NTIME: usize = 10000;
+static DATA: &[u8] = b"1111111111111111111111111111111111111";
 
 async fn work(host: Arc<String>) {
     let stream = TcpStream::connect(&*host).await.unwrap();
     let (mut reader, mut writer) = stream.into_split();
 
-    tracing::info!("连接成功");
+    // tracing::info!("连接成功");
+
+    let hstr = hex::encode(DATA);
 
     let j = tokio::spawn(async move {
         let mut buf =vec![0u8; g::DEFAULT_BUF_SIZE];
-        let mut pck = RSP_POOL.pull();
         let mut rc = 0;
+        let mut builer = tg::nw::packet::Builder::new();
 
         'read_loop: loop {
-            let nread = match reader.read(&mut buf).await {
+            let n = match reader.read(&mut buf).await {
                 Ok(0) => {
                     tracing::info!("EOF.");
                     break 'read_loop
@@ -32,50 +35,47 @@ async fn work(host: Arc<String>) {
                 }
             };
 
-            let mut consume = 0;
             'pack_loop: loop {
-                if pck.valid() {
-                    rc += 1;
-
-                    assert_eq!(std::str::from_utf8(pck.data()).unwrap(), std::str::from_utf8(DATA).unwrap());
-
-                    if pck.idempotent() == 10000 {
+                let (p, done) = match builer.parse(&buf[..n]) {
+                    PacketResult::Err(err) => {
+                        tracing::error!("{err}");
                         break 'read_loop;
                     }
-                    
-                    pck.reset();
-                } else {
-                    consume += match pck.from_bytes(&buf[consume..nread]) {
-                        Ok(n) => n,
-                        Err(err) => {
-                            tracing::error!("{} => {err}", line!());
-                            break 'read_loop;
-                        }
-                    };
-                }
 
-                if consume == nread && !pck.valid() {
+                    PacketResult::None => break 'pack_loop,
+                    PacketResult::Next(v) => (v, false),
+                    PacketResult::Last(v) => (v, true),
+                };
+
+                assert_eq!(p.id(), 1);
+                assert_eq!(p.idempotent(), rc + 1);
+                assert_eq!(hstr, hex::encode(p.data()));
+                rc = p.idempotent();
+
+                if done {
                     break 'pack_loop;
                 }
             }
+
+            if rc as usize == NTIME {
+                break 'read_loop;
+            }
         }
 
-        assert_eq!(rc, 10000);
+        assert_eq!(rc as usize, NTIME);
     });
 
-    for i in 0..10000 {
+    for i in 0..NTIME {
         let mut req = REQ_POOL.pull();
-        req.set(1, i + 1, DATA);
-        
-        let mut wbuf = WBUF_POOL.pull();
-        req.to_bytes(&mut wbuf);
-        if let Err(err) = writer.write_all(&wbuf).await {
+        req.set(1, i as u32 + 1, DATA);
+
+        if let Err(err) = writer.write_all(req.raw()).await {
             println!("write failed: {:?}", err);
             break;
         }
     }
 
-    tracing::info!("发送完毕");
+    // tracing::info!("发送完毕");
     j.await.unwrap();
     
 }

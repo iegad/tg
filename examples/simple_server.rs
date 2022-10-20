@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use lockfree_object_pool::LinearReusable;
 use tg::utils;
 
 #[derive(Clone, Copy, Default)]
@@ -11,10 +10,10 @@ impl tg::nw::server::IEvent for SimpleEvent {
 
     async fn on_process(
         &self,
-        _conn: &tg::nw::conn::ConnPtr<()>,
-        _req: LinearReusable<'static, Vec<u8>>,
+        conn: &tg::nw::conn::ConnPtr<()>,
+        req: tg::nw::server::Pack,
     ) -> tg::g::Result<()> {
-        // assert_eq!(req.idempotent(), conn.recv_seq());
+        assert_eq!(req.idempotent(), conn.recv_seq());
         Ok(())
     }
 

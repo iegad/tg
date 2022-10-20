@@ -33,7 +33,7 @@ pub struct Conn<'a, U: Default + Send + Sync + 'static> {
     user_data: Option<U>,
     // contorller
     shutdown_sender: broadcast::Sender<u8>,        // 会话关闭管道
-    tx: Option<futures::channel::mpsc::UnboundedSender<LinearReusable<'static, Vec<u8>>>>,
+    tx: Option<futures::channel::mpsc::UnboundedSender<super::server::Pack>>,
 }
 
 impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
@@ -67,7 +67,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     ///
     /// ```
     /// lazy_static::lazy_static! {
-    ///     static ref CONN_POOL: tg::nw::conn::ConnPool<()> = tg::nw::conn::Conn::<()>::pool();
+    ///     static ref CONN_POOL: tg::nw::conn::ConnPool<'static, ()> = tg::nw::conn::Conn::<()>::pool();
     /// }
     /// ```
     pub fn pool() -> ConnPool<'a, U> {
@@ -88,7 +88,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     pub(crate) fn setup(
         &self,
         reader: &'a tokio::net::tcp::OwnedReadHalf,
-        tx: futures::channel::mpsc::UnboundedSender<LinearReusable<'static, Vec<u8>>>
+        tx: futures::channel::mpsc::UnboundedSender<super::server::Pack>
     ) -> broadcast::Receiver<u8> {
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
@@ -181,7 +181,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
 
     /// 接收序列递增
     #[inline(always)]
-    pub(crate) fn _recv_seq_incr(&self) {
+    pub(crate) fn recv_seq_incr(&self) {
         unsafe {
             let p = &self.recv_seq as *const u32 as *mut u32;
             *p += 1;
@@ -217,7 +217,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
 
     /// 发送消息
     #[inline]
-    pub fn send(&self, data: LinearReusable<'static, Vec<u8>>) -> g::Result<()> {
+    pub fn send(&self, data: super::server::Pack) -> g::Result<()> {
         if let None = self.tx {
             return Err(g::Err::ConnInvalid);
         }
