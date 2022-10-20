@@ -133,7 +133,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
 ) {
     // step 2: get socket reader and writer
     let (mut reader, writer) = stream.into_split();
-    let (ptx, prx) = futures::channel::mpsc::unbounded();
+    let (ptx, prx) = futures::channel::mpsc::channel(g::DEFAULT_CHAN_SIZE);
     let mut srx = conn.setup(&reader, ptx);
     let srxc = srx.resubscribe();
     let mut builder = packet::Builder::new();
@@ -225,7 +225,7 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
     conn: ConnPtr<'a, T::U>,
     event: T,
     mut writer: tokio::net::tcp::OwnedWriteHalf, 
-    mut prx: futures::channel::mpsc::UnboundedReceiver<super::server::Pack>, 
+    mut prx: futures::channel::mpsc::Receiver<super::server::Pack>, 
     mut srx: tokio::sync::broadcast::Receiver<u8>) {
 
     'write_loop: loop {

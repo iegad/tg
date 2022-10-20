@@ -33,7 +33,7 @@ pub struct Conn<'a, U: Default + Send + Sync + 'static> {
     user_data: Option<U>,
     // contorller
     shutdown_sender: broadcast::Sender<u8>,        // 会话关闭管道
-    tx: Option<futures::channel::mpsc::UnboundedSender<super::server::Pack>>,
+    tx: Option<futures::channel::mpsc::Sender<super::server::Pack>>,
 }
 
 impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
@@ -88,7 +88,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     pub(crate) fn setup(
         &self,
         reader: &'a tokio::net::tcp::OwnedReadHalf,
-        tx: futures::channel::mpsc::UnboundedSender<super::server::Pack>
+        tx: futures::channel::mpsc::Sender<super::server::Pack>
     ) -> broadcast::Receiver<u8> {
         reader.as_ref().set_nodelay(true).unwrap();
         unsafe {
@@ -225,7 +225,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
 
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
-            if let Err(err) = this.tx.as_mut().unwrap().unbounded_send(data) {
+            if let Err(err) = this.tx.as_mut().unwrap().try_send(data) {
                 return Err(g::Err::IOWriteFailed(format!("conn.send failed: {err}")));
             }
         }
