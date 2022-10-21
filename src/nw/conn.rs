@@ -7,6 +7,8 @@ use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 use tokio::{sync::broadcast};
 use crate::g;
 
+use super::packet;
+
 // ---------------------------------------------- nw::Conn<U> ----------------------------------------------
 //
 //
@@ -30,9 +32,11 @@ pub struct Conn<'a, U: Default + Send + Sync + 'static> {
     send_seq: u32,
     recv_seq: u32,
     reader: Option<&'a tokio::net::tcp::OwnedReadHalf>,
+    rbuf: [u8; g::DEFAULT_BUF_SIZE],
     user_data: Option<U>,
+    builder: packet::Builder,
     // contorller
-    shutdown_sender: broadcast::Sender<u8>,        // 会话关闭管道
+    shutdown_tx: broadcast::Sender<u8>,        // 会话关闭管道
     tx: Option<futures::channel::mpsc::Sender<super::server::Pack>>,
 }
 
@@ -47,8 +51,10 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
             send_seq: 0,
             recv_seq: 0,
             reader: None,
-            shutdown_sender,
+            rbuf: [0; g::DEFAULT_BUF_SIZE],
+            shutdown_tx: shutdown_sender,
             user_data: None,
+            builder: packet::Builder::new(),
             tx: None,
         }
     }
@@ -96,7 +102,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
             this.reader = Some(reader);
             this.tx = Some(tx);
         }
-        self.shutdown_sender.subscribe()
+        self.shutdown_tx.subscribe()
     }
 
     /// # Conn<U>.reset
@@ -113,6 +119,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
             this.recv_seq = 0;
             this.user_data = None;
             this.reader = None;
+            this.builder.reset();
         }
     }
 
@@ -158,7 +165,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     #[inline(always)]
     pub fn shutdown(&self) {
         assert!(self.reader.is_some());
-        self.shutdown_sender.send(1).unwrap();
+        self.shutdown_tx.send(1).unwrap();
     }
 
     #[inline(always)]
@@ -172,6 +179,10 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
             let p = &self.idempotent as *const u32 as *mut u32;
             *p = idempotent;
         }
+    }
+
+    pub(crate) fn builder(&self) -> &mut packet::Builder {
+        unsafe { &mut *(&self.builder as *const packet::Builder as *mut packet::Builder) }
     }
 
     /// 获取接收序列
@@ -214,6 +225,16 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     #[inline(always)]
     pub fn user_data(&self) -> Option<&U> {
         self.user_data.as_ref()
+    }
+
+    #[inline(always)]
+    pub fn rbuf_mut(&self) -> &mut [u8] {
+        unsafe { &mut *(&self.rbuf as *const [u8] as *mut [u8]) }
+    }
+
+    #[inline(always)]
+    pub fn rbuf(&self, n: usize) -> & [u8] {
+        &self.rbuf[..n]
     }
 
     /// 发送消息

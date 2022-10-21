@@ -31,7 +31,7 @@ impl tg::nw::server::IEvent for EchoEvent {
 
     #[allow(unused_variables)]
     async fn on_connected(&self, conn: &tg::nw::conn::ConnPtr<()>) -> tg::g::Result<()> {
-        tracing::info!("[{:?}] has connected", conn.remote());
+        // tracing::info!("[{:?}] has connected", conn.remote());
         Ok(())
     }
 

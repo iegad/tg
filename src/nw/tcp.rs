@@ -1,5 +1,5 @@
-use super::{server::Server, conn::{ConnPool, ConnPtr}, packet::{self, WBUF_POOL}};
-use crate::{g, nw::packet::PacketResult};
+use super::{server::Server, conn::{ConnPool, ConnPtr}};
+use crate::g;
 use std::sync::{atomic::Ordering, Arc};
 use futures::StreamExt;
 use tokio::{
@@ -131,12 +131,11 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     event: T,
     permit: OwnedSemaphorePermit,
 ) {
-    // step 2: get socket reader and writer
+    // step 1: get socket reader and writer
     let (mut reader, writer) = stream.into_split();
     let (ptx, prx) = futures::channel::mpsc::channel(g::DEFAULT_CHAN_SIZE);
     let mut srx = conn.setup(&reader, ptx);
     let srxc = srx.resubscribe();
-    let mut builder = packet::Builder::new();
     
     let eventc = event.clone();
     let connc = conn.clone();
@@ -148,7 +147,6 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     // step 3: timeout ticker.
     let interval = if timeout == 0 { 60 * 60} else { timeout };
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
-    let mut rbuf = WBUF_POOL.pull();
 
     if let Err(_) = event.on_connected(&conn).await {
         return;
@@ -174,7 +172,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
                 break 'read_loop;
             }
 
-            result_read = reader.read(&mut rbuf) => {
+            result_read = reader.read(conn.rbuf_mut()) => {
                 let n = match result_read {
                     Err(err) => {
                         event.on_error(&conn, g::Err::IOReadFailed(format!("{err}"))).await;
@@ -191,23 +189,26 @@ async fn conn_handle<'a, T: super::server::IEvent>(
                 };
 
                 'pack_loop: loop {
-                    let (pack, done) = match builder.parse(&rbuf[..n]) {
-                        PacketResult::None => break 'pack_loop,
-                        PacketResult::Err(err) => {
+                    let option_pkt = match conn.builder().parse(conn.rbuf(n)) {
+                        Err(err) => {
                             event.on_error(&conn, err).await;
                             break 'read_loop;
                         }
-                        PacketResult::Next(v) => (v, false),
-                        PacketResult::Last(v) => (v, true),
+                        Ok(v) => v,
+                    };
+
+                    let (pkt, next) = match option_pkt {
+                        None => break 'pack_loop,
+                        Some(v) => v,
                     };
 
                     conn.recv_seq_incr();
-                    conn.set_idempotent(pack.idempotent());
-                    if let Err(_) = event.on_process(&conn, pack).await {
+                    conn.set_idempotent(pkt.idempotent());
+                    if let Err(_) = event.on_process(&conn, pkt).await {
                         break 'read_loop;
                     }
 
-                    if done {
+                    if !next {
                         break 'pack_loop;
                     }
                 }

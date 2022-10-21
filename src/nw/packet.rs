@@ -10,13 +10,6 @@ lazy_static::lazy_static! {
     pub static ref REQ_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::new, |v|{v.reset();});
 }
 
-pub enum PacketResult {
-    None,
-    Next(LinearItem),
-    Last(LinearItem),
-    Err(g::Err),
-}
-
 pub struct Packet(Vec<u8>);
 
 impl Packet {
@@ -41,7 +34,7 @@ impl Packet {
             *(p.add(4) as *mut u32) = idempotent;
             *(p.add(8) as *mut u32) = rl as u32;
 
-            std::ptr::copy(data.as_ptr(), raw.as_mut_ptr().add(Self::HEAD_SIZE), dl);
+            std::ptr::copy_nonoverlapping(data.as_ptr(), raw.as_mut_ptr().add(Self::HEAD_SIZE), dl);
         }
 
         raw[0] = raw[2] ^ raw[11];
@@ -115,7 +108,7 @@ impl Packet {
         unsafe {
             self.0.set_len(rl);
             let p = self.0.as_mut_ptr();
-            std::ptr::copy(data.as_ptr(), p.add(12), dl);
+            std::ptr::copy_nonoverlapping(data.as_ptr(), p.add(12), dl);
             *(p.add(8) as *mut u32) = rl as u32;
         }
     }
@@ -144,7 +137,7 @@ impl Packet {
             *(p.add(4) as *mut u32) = idempotent;
             *(p.add(8) as *mut u32) = rl as u32;
 
-            std::ptr::copy(data.as_ptr(), p.add(12), dl);
+            std::ptr::copy_nonoverlapping(data.as_ptr(), p.add(12), dl);
         }
 
         self.0[0] = self.0[2] ^ self.0[11];
@@ -199,7 +192,16 @@ impl Builder {
         }
     }
 
-    pub fn parse(&mut self, buf: &[u8]) -> PacketResult {
+    #[inline(always)]
+    pub fn reset(&mut self) {
+        self.pos = 0;
+        match self.current.as_deref_mut() {
+            Some(v) => v.reset(),
+            None => (),
+        }
+    }
+
+    pub fn parse(&mut self, buf: &[u8]) -> g::Result<Option<(LinearItem, bool)>> {
         let mut buflen = buf.len();
         assert!(buflen > 0);
 
@@ -208,7 +210,7 @@ impl Builder {
         buflen = buflen - bufpos;
 
         if buflen == 0 {
-            return PacketResult::None;
+            return Ok(None);
         }
 
         let mut current = match self.current.take() {
@@ -226,7 +228,7 @@ impl Builder {
             }
 
             unsafe {
-                std::ptr::copy(buf.as_ptr().add(bufpos), current.0.as_mut_ptr().add(current_len), nleft);
+                std::ptr::copy_nonoverlapping(buf.as_ptr().add(bufpos), current.0.as_mut_ptr().add(current_len), nleft);
 
                 bufpos += nleft;
                 buflen -= nleft;
@@ -237,7 +239,7 @@ impl Builder {
             // 检查消息头, 如果检查失败, 直接将失败的结果返回
             if current_len == Packet::HEAD_SIZE {
                 if current.id() == 0 || current.idempotent() == 0 || !current.check_hc() {
-                    return PacketResult::Err(g::Err::PackHeadInvalid);
+                    return Err(g::Err::PackHeadInvalid);
                 }
             }
         }
@@ -255,7 +257,7 @@ impl Builder {
             }
 
             unsafe {
-                std::ptr::copy(buf.as_ptr().add(bufpos), current.0.as_mut_ptr().add(current_len), nleft);
+                std::ptr::copy_nonoverlapping(buf.as_ptr().add(bufpos), current.0.as_mut_ptr().add(current_len), nleft);
 
                 bufpos += nleft;
                 buflen -= nleft;
@@ -273,14 +275,14 @@ impl Builder {
         // 检查消息体
         if current_len == current.raw_len() {
             if !current.check_rc() {
-                return PacketResult::Err(g::Err::PacketInvalid)
+                return Err(g::Err::PacketInvalid)
             }
 
-            return if buflen == 0 { PacketResult::Last(current) } else { PacketResult::Next(current) }
+            return if buflen == 0 { Ok(Some((current, false))) } else { Ok(Some((current, true))) }
         }
         
         self.current = Some(current);
-        PacketResult::None
+        Ok(None)
     }
 }
 
@@ -336,11 +338,14 @@ mod test_packet {
 
         for i in 0..1000 {
             tracing::debug!("------------------------------ {i}");
-            let (pkt, done) = match builder.parse(&mut buf) {
-                super::PacketResult::Err(err) => panic!("{err}"),
-                super::PacketResult::None => break,
-                super::PacketResult::Next(v) => (v, false),
-                super::PacketResult::Last(v) => (v, true),
+            let option_pkt = match builder.parse(&mut buf) {
+                Err(err) => panic!("{err}"),
+                Ok(v) => v,
+            };
+
+            let (pkt, next) = match option_pkt {
+                None => break,
+                Some((pkt, v)) => (pkt, v),
             };
 
             tracing::debug!("-->>> idempotent: {}", pkt.idempotent());
@@ -349,7 +354,7 @@ mod test_packet {
             assert_eq!(hex::encode(data), hex::encode(pkt.data()));
             assert_eq!(pkt.raw().len(), pkt.raw_len());
 
-            if done {
+            if !next {
                 assert_eq!(i, 99);
                 break;
             }
