@@ -1,4 +1,4 @@
-use super::{server::Server, conn::{Pool, Ptr}};
+use super::{server::Server, conn};
 use futures::StreamExt;
 use crate::g;
 use std::sync::{atomic::Ordering, Arc};
@@ -6,7 +6,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
     select,
-    sync::{broadcast, OwnedSemaphorePermit},
+    sync::broadcast,
 };
 
 // ---------------------------------------------- server_run ----------------------------------------------
@@ -23,7 +23,7 @@ use tokio::{
 /// `conn_pool` Conn<T::U> object pool.
 pub async fn server_run<'a, T>(
     server: Arc<Server<T>>,
-    conn_pool: &'static Pool<'a, T::U>,
+    conn_pool: &'static conn::Pool<'a, T::U>,
 ) -> g::Result<()>
 where
     T: super::server::IEvent,
@@ -89,7 +89,8 @@ where
 
                 let permit = server.limit_connections.clone().acquire_owned().await.unwrap();
                 tokio::spawn(async move {
-                    conn_handle(stream, conn, timeout, shutdown_receiver, event, permit).await;
+                    conn_handle(stream, conn, timeout, shutdown_receiver, event).await;
+                    drop(permit);
                 });
             }
         }
@@ -125,11 +126,10 @@ where
 ///
 async fn conn_handle<'a, T: super::server::IEvent>(
     stream: TcpStream,
-    conn: Ptr<'_, T::U>,
+    conn: conn::Ptr<'_, T::U>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
-    event: T,
-    permit: OwnedSemaphorePermit,
+    event: T
 ) {
     // step 1: get socket reader and writer
     let (mut reader, writer) = stream.into_split();
@@ -216,13 +216,12 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     }
 
     writer_future.await.unwrap();
-    drop(permit);
     event.on_disconnected(&conn).await;
     conn.reset();
 }
 
 async fn conn_write_handle<'a, T: super::server::IEvent>(
-    conn: Ptr<'_, T::U>,
+    conn: conn::Ptr<'_, T::U>,
     event: T,
     mut writer: tokio::net::tcp::OwnedWriteHalf, 
     mut srx: tokio::sync::broadcast::Receiver<u8>) {
@@ -244,4 +243,16 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
             }
         }
     }
+}
+
+pub async fn connect<T: super::server::IEvent>(host: &str, timeout: u64, shutdown_rx: tokio::sync::broadcast::Receiver<u8>, conn: super::conn::Ptr<'static, T::U>) -> g::Result<()> {
+    let stream = match TcpStream::connect(host).await {
+        Ok(v) => v,
+        Err(err) => return Err(g::Err::TcpConnectFailed(format!("{err}"))),
+    };
+    tracing::info!("----------------1");
+    let event = T::default();
+    conn_handle(stream, conn, timeout, shutdown_rx, event).await;
+    tracing::info!("----------------2");
+    Ok(())
 }

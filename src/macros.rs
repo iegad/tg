@@ -64,10 +64,3 @@ macro_rules! tcp_server_run {
         c.wait().await;
     };
 }
-
-#[macro_export]
-macro_rules! make_wbuf {
-    ($buf:expr) => {
-        Some(std::sync::Arc::new($buf))
-    };
-}

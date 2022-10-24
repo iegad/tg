@@ -44,7 +44,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     /// # Conn<U>::new
     ///
     /// 创建默认的会话端实例, 该函数由框架内部调用, 用于 对象池的初始化
-    fn new() -> Self {
+    pub fn new() -> Self {
         let (shutdown_sender, _) = broadcast::channel(1);
         let (tx, rx) = futures::channel::mpsc::channel(g::DEFAULT_CHAN_SIZE);
         Self {
