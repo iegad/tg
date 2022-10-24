@@ -4,7 +4,7 @@ use tokio::sync::{Semaphore, broadcast};
 use crate::g;
 use super::{conn::ConnPtr, packet};
 
-pub type Pack = packet::LinearItem;
+pub type Packet = packet::LinearItem;
 
 // ---------------------------------------------- IServerEvent ----------------------------------------------
 //
@@ -69,7 +69,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     /// # 触发
     ///
     /// 在会话端成功解析消息后触发.
-    async fn on_process(&self, conn: &ConnPtr<Self::U>, req: Pack) -> g::Result<()>;
+    async fn on_process(&self, conn: &ConnPtr<Self::U>, req: Packet) -> g::Result<()>;
 
     /// 服务端运行事件
     ///

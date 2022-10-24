@@ -4,7 +4,8 @@ use crate::g;
 pub type LinearItem = LinearReusable<'static, Packet>;
 
 lazy_static::lazy_static! {
-    static ref RAW_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::new, |v|{v.reset();});
+    /// packet 内部使用对象池.
+    static ref INNER_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::default, |v|{v.reset();});
 
     pub static ref WBUF_POOL: LinearObjectPool<Vec<u8>> = LinearObjectPool::new(|| vec![0; g::DEFAULT_BUF_SIZE], |v| unsafe { v.set_len(g::DEFAULT_BUF_SIZE); });
     pub static ref REQ_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::new, |v|{v.reset();});
@@ -16,29 +17,30 @@ impl Packet {
     pub const HEAD_SIZE: usize = 12;
     pub const MAX_DATA_SIZE: usize = 1024 * 1024 * 2;
 
+    #[inline(always)]
     pub fn new() -> Self {
         Self(Vec::with_capacity(g::DEFAULT_BUF_SIZE))
     }
 
     pub fn with(id: u16, idempotent: u32, data: &[u8]) -> Self {
-        let dl = data.len();
-        assert!(dl <= Self::MAX_DATA_SIZE);
+        let dlen = data.len();
+        assert!(dlen <= Self::MAX_DATA_SIZE);
 
-        let rl = Self::HEAD_SIZE + dl;
-        let mut raw = Vec::<u8>::with_capacity(rl);
+        let rlen = Self::HEAD_SIZE + dlen;
+        let mut raw = Vec::<u8>::with_capacity(rlen);
 
         unsafe {
-            raw.set_len(rl);
+            raw.set_len(rlen);
             let p = raw.as_mut_ptr();
             *(p.add(2) as *mut u16) = id;
             *(p.add(4) as *mut u32) = idempotent;
-            *(p.add(8) as *mut u32) = rl as u32;
+            *(p.add(8) as *mut u32) = rlen as u32;
 
-            std::ptr::copy_nonoverlapping(data.as_ptr(), raw.as_mut_ptr().add(Self::HEAD_SIZE), dl);
+            std::ptr::copy_nonoverlapping(data.as_ptr(), raw.as_mut_ptr().add(Self::HEAD_SIZE), dlen);
         }
 
         raw[0] = raw[2] ^ raw[11];
-        raw[1] = raw[2] ^ raw[rl - 1];
+        raw[1] = raw[2] ^ raw[rlen - 1];
         Self(raw)
     }
 
@@ -69,15 +71,15 @@ impl Packet {
 
     #[inline(always)]
     pub fn valid(&self) -> bool {
-        let rl = self.0.len();
+        let rlen = self.0.len();
 
         unsafe {
             let p = self.0.as_ptr();
             *(p.add(2) as *const u16) > 0 
             && *(p.add(4) as *const u32) > 0 
-            && *(p.add(8) as *const u32) as usize == rl
+            && *(p.add(8) as *const u32) as usize == rlen
             && *p == *p.add(2) ^ *p.add(11)
-            && *p.add(1) == *p.add(2) ^ *p.add(rl - 1)
+            && *p.add(1) == *p.add(2) ^ *p.add(rlen - 1)
         }
     }
     
@@ -93,23 +95,23 @@ impl Packet {
 
     #[inline(always)]
     pub fn set_data(&mut self, data: &[u8]) {
-        let dl = data.len(); 
-        if dl == 0 {
+        let dlen = data.len(); 
+        if dlen == 0 {
             return;
         }
 
-        assert!(dl <= Self::MAX_DATA_SIZE);
+        assert!(dlen <= Self::MAX_DATA_SIZE);
 
-        let rl = Self::HEAD_SIZE + dl;
-        if self.0.capacity() < rl {
-            self.0.reserve(rl);
+        let rlen = Self::HEAD_SIZE + dlen;
+        if self.0.capacity() < rlen {
+            self.0.reserve(rlen);
         }
 
         unsafe {
-            self.0.set_len(rl);
+            self.0.set_len(rlen);
             let p = self.0.as_mut_ptr();
-            std::ptr::copy_nonoverlapping(data.as_ptr(), p.add(12), dl);
-            *(p.add(8) as *mut u32) = rl as u32;
+            std::ptr::copy_nonoverlapping(data.as_ptr(), p.add(12), dlen);
+            *(p.add(8) as *mut u32) = rlen as u32;
         }
     }
 
@@ -121,10 +123,10 @@ impl Packet {
 
     #[inline(always)]
     pub fn set(&mut self, id: u16, idempotent: u32, data: &[u8]) {
-        let dl = data.len();
-        assert!(dl <= Self::MAX_DATA_SIZE);
+        let dlen = data.len();
+        assert!(dlen <= Self::MAX_DATA_SIZE);
 
-        let rl = Self::HEAD_SIZE + dl;
+        let rl = Self::HEAD_SIZE + dlen;
         if self.0.capacity() < rl {
             self.0.reserve(rl);
         }
@@ -137,7 +139,7 @@ impl Packet {
             *(p.add(4) as *mut u32) = idempotent;
             *(p.add(8) as *mut u32) = rl as u32;
 
-            std::ptr::copy_nonoverlapping(data.as_ptr(), p.add(12), dl);
+            std::ptr::copy_nonoverlapping(data.as_ptr(), p.add(Self::HEAD_SIZE), dlen);
         }
 
         self.0[0] = self.0[2] ^ self.0[11];
@@ -215,7 +217,7 @@ impl Builder {
 
         let mut current = match self.current.take() {
             Some(v) => v,
-            None => RAW_POOL.pull(),
+            None => INNER_POOL.pull(),
         };
 
         let mut current_len = current.0.len();

@@ -18,7 +18,7 @@ impl tg::nw::server::IEvent for EchoEvent {
     async fn on_process(
         &self,
         conn: &tg::nw::conn::ConnPtr<()>,
-        req: tg::nw::server::Pack,
+        req: tg::nw::server::Packet,
     ) -> tg::g::Result<()> {
         // tracing::info!("{}", hex::encode(req.raw()));
         if let Err(err) = conn.send(req) {

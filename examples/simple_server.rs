@@ -11,7 +11,7 @@ impl tg::nw::server::IEvent for SimpleEvent {
     async fn on_process(
         &self,
         conn: &tg::nw::conn::ConnPtr<()>,
-        req: tg::nw::server::Pack,
+        req: tg::nw::server::Packet,
     ) -> tg::g::Result<()> {
         assert_eq!(req.idempotent(), conn.recv_seq());
         Ok(())

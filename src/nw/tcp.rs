@@ -1,7 +1,7 @@
 use super::{server::Server, conn::{ConnPool, ConnPtr}};
+use futures::StreamExt;
 use crate::g;
 use std::sync::{atomic::Ordering, Arc};
-use futures::StreamExt;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream},
@@ -133,15 +133,14 @@ async fn conn_handle<'a, T: super::server::IEvent>(
 ) {
     // step 1: get socket reader and writer
     let (mut reader, writer) = stream.into_split();
-    let (ptx, prx) = futures::channel::mpsc::channel(g::DEFAULT_CHAN_SIZE);
-    let mut srx = conn.setup(&reader, ptx);
+    let mut srx = conn.setup(&reader);
     let srxc = srx.resubscribe();
     
     let eventc = event.clone();
     let connc = conn.clone();
 
     let writer_future = tokio::spawn(async move {
-        conn_write_handle(connc, eventc, writer, prx, srxc).await;
+        conn_write_handle(connc, eventc, writer, srxc).await;
     });
 
     // step 3: timeout ticker.
@@ -226,7 +225,6 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
     conn: ConnPtr<'a, T::U>,
     event: T,
     mut writer: tokio::net::tcp::OwnedWriteHalf, 
-    mut prx: futures::channel::mpsc::Receiver<super::server::Pack>, 
     mut srx: tokio::sync::broadcast::Receiver<u8>) {
 
     'write_loop: loop {
@@ -235,9 +233,8 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
                 break 'write_loop;
             }
 
-            option_out = prx.next() => {
+            option_out = conn.rx().next() => {
                 if let Some(out) = option_out {
-                    // out.to_bytes(&mut wbuf);
                     if let Err(err) = writer.write_all(out.raw()).await {
                         event.on_error(&conn, g::Err::IOWriteFailed(format!("{err}"))).await;
                         conn.shutdown();

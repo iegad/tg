@@ -89,7 +89,7 @@ async fn main() {
     let host = Arc::new(std::env::args().nth(1).unwrap());
 
     let beg = utils::now_unix_micros();
-    for _ in 0..50 {
+    for _ in 0..100 {
         let v = host.clone();
         arr.push(tokio::spawn(async move {
             work(v).await;  

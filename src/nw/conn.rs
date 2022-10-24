@@ -6,8 +6,7 @@ use std::{net::SocketAddr, sync::Arc};
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 use tokio::{sync::broadcast};
 use crate::g;
-
-use super::packet;
+use super::{packet, server};
 
 // ---------------------------------------------- nw::Conn<U> ----------------------------------------------
 //
@@ -37,7 +36,8 @@ pub struct Conn<'a, U: Default + Send + Sync + 'static> {
     builder: packet::Builder,
     // contorller
     shutdown_tx: broadcast::Sender<u8>,        // 会话关闭管道
-    tx: Option<futures::channel::mpsc::Sender<super::server::Pack>>,
+    tx: futures::channel::mpsc::Sender<super::server::Packet>,
+    rx: futures::channel::mpsc::Receiver<super::server::Packet>
 }
 
 impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
@@ -46,6 +46,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     /// 创建默认的会话端实例, 该函数由框架内部调用, 用于 对象池的初始化
     fn new() -> Self {
         let (shutdown_sender, _) = broadcast::channel(1);
+        let (tx, rx) = futures::channel::mpsc::channel(g::DEFAULT_CHAN_SIZE);
         Self {
             idempotent: 0,
             send_seq: 0,
@@ -55,7 +56,8 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
             shutdown_tx: shutdown_sender,
             user_data: None,
             builder: packet::Builder::new(),
-            tx: None,
+            tx,
+            rx,
         }
     }
 
@@ -93,14 +95,12 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     /// 当会话端从对象池中被取出来时, 处于未激活状态, 未激活的会话端不能正常使用.
     pub(crate) fn setup(
         &self,
-        reader: &'a tokio::net::tcp::OwnedReadHalf,
-        tx: futures::channel::mpsc::Sender<super::server::Pack>
+        reader: &'a tokio::net::tcp::OwnedReadHalf
     ) -> broadcast::Receiver<u8> {
         reader.as_ref().set_nodelay(true).unwrap();
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
             this.reader = Some(reader);
-            this.tx = Some(tx);
         }
         self.shutdown_tx.subscribe()
     }
@@ -237,16 +237,18 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         &self.rbuf[..n]
     }
 
+    #[inline(always)]
+    pub(crate) fn rx(&self) -> &mut futures::channel::mpsc::Receiver<server::Packet> {
+        use futures::channel::mpsc::Receiver;
+        unsafe {&mut *(&self.rx as *const Receiver<server::Packet> as *mut Receiver<server::Packet>) }
+    }
+
     /// 发送消息
     #[inline]
-    pub fn send(&self, data: super::server::Pack) -> g::Result<()> {
-        if let None = self.tx {
-            return Err(g::Err::ConnInvalid);
-        }
-
+    pub fn send(&self, data: super::server::Packet) -> g::Result<()> {
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
-            if let Err(err) = this.tx.as_mut().unwrap().try_send(data) {
+            if let Err(err) = this.tx.try_send(data) {
                 return Err(g::Err::IOWriteFailed(format!("conn.send failed: {err}")));
             }
         }
