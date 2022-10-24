@@ -42,9 +42,9 @@
 #[macro_export]
 macro_rules! tcp_server_run {
     ($host:expr, $max:expr, $timout:expr, $event:ty) => {
-        use tg::nw::{conn::{Conn, ConnPool}, server::{IEvent, Server}, tcp::server_run};
+        use tg::nw::{conn::{Conn, Pool}, server::{IEvent, Server}, tcp::server_run};
 
-        type TConnPool = ConnPool<'static, <$event as IEvent>::U>;
+        type TConnPool = Pool<'static, <$event as IEvent>::U>;
 
         lazy_static::lazy_static! {
             static ref CONN_POOL: TConnPool = Conn::pool();

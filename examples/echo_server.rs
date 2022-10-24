@@ -17,10 +17,9 @@ impl tg::nw::server::IEvent for EchoEvent {
 
     async fn on_process(
         &self,
-        conn: &tg::nw::conn::ConnPtr<()>,
+        conn: &tg::nw::conn::Ptr<()>,
         req: tg::nw::server::Packet,
     ) -> tg::g::Result<()> {
-        // tracing::info!("{}", hex::encode(req.raw()));
         if let Err(err) = conn.send(req) {
             tracing::error!("on_process: {err}");
             Err(tg::g::Err::Custom("DOS".to_string()))
@@ -30,13 +29,13 @@ impl tg::nw::server::IEvent for EchoEvent {
     }
 
     #[allow(unused_variables)]
-    async fn on_connected(&self, conn: &tg::nw::conn::ConnPtr<()>) -> tg::g::Result<()> {
+    async fn on_connected(&self, conn: &tg::nw::conn::Ptr<()>) -> tg::g::Result<()> {
         // tracing::info!("[{:?}] has connected", conn.remote());
         Ok(())
     }
 
     #[allow(unused_variables)]
-    async fn on_disconnected(&self, conn: &tg::nw::conn::ConnPtr<()>) {
+    async fn on_disconnected(&self, conn: &tg::nw::conn::Ptr<()>) {
         tracing::info!("[{:?} - {:?}] has disconnected: {}", conn.sockfd(), conn.remote(), conn.send_seq());
     }
 }

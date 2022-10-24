@@ -14,9 +14,9 @@ use super::{packet, server};
 /// # ConnPtr<T>
 /// 
 /// 会话端指针
-pub type ConnItem<'a, T> = LinearReusable<'static, Conn<'a, T>>;
-pub type ConnPool<'a, T> = LinearObjectPool<Conn<'a, T>>;
-pub type ConnPtr<'a, T> = Arc<ConnItem<'a, T>>;
+pub type LinearItem<'a, T> = LinearReusable<'static, Conn<'a, T>>;
+pub type Pool<'a, T> = LinearObjectPool<Conn<'a, T>>;
+pub type Ptr<'a, T> = Arc<LinearItem<'a, T>>;
 
 /// # Conn<U>
 ///
@@ -75,10 +75,10 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     ///
     /// ```
     /// lazy_static::lazy_static! {
-    ///     static ref CONN_POOL: tg::nw::conn::ConnPool<'static, ()> = tg::nw::conn::Conn::<()>::pool();
+    ///     static ref CONN_POOL: tg::nw::conn::Pool<'static, ()> = tg::nw::conn::Conn::<()>::pool();
     /// }
     /// ```
-    pub fn pool() -> ConnPool<'a, U> {
+    pub fn pool() -> Pool<'a, U> {
         LinearObjectPool::new(Self::new, |v|v.reset())
     }
 

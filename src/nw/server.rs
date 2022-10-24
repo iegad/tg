@@ -2,7 +2,7 @@ use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use async_trait::async_trait;
 use tokio::sync::{Semaphore, broadcast};
 use crate::g;
-use super::{conn::ConnPtr, packet};
+use super::{conn::Ptr, packet};
 
 pub type Packet = packet::LinearItem;
 
@@ -18,7 +18,7 @@ pub type Packet = packet::LinearItem;
 /// ```
 /// use async_trait::async_trait;
 ///
-/// #[derive(Clone, Copy, Default)]
+/// #[derive(Clone, Default)]
 /// struct DemoEvent;
 ///
 /// #[async_trait]
@@ -26,9 +26,9 @@ pub type Packet = packet::LinearItem;
 ///     // make IServerEvent::U => ().
 ///     type U = ();
 ///
-///     async fn on_process(&self, conn: &tg::nw::conn::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::LinearItem>> {
+///     async fn on_process(&self, conn: &tg::nw::conn::Ptr<()>, req: tg::nw::server::Packet) -> tg::g::Result<()> {
 ///         println!("{:?} => {:?}", conn.remote(), req.data());
-///         Ok(None)
+///         Ok(())
 ///     }
 /// }
 /// ```
@@ -41,7 +41,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     /// # 触发
     ///
     /// 在会话端会读写出现错误时触发.
-    async fn on_error(&self, conn: &ConnPtr<Self::U>, err: g::Err) {
+    async fn on_error(&self, conn: &Ptr<Self::U>, err: g::Err) {
         tracing::error!("[{:?} - {:?}] => {err}", conn.sockfd(), conn.remote());
     }
 
@@ -50,7 +50,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     /// # 触发
     ///
     /// 在会话端连接连接成功后触发.
-    async fn on_connected(&self, conn: &ConnPtr<Self::U>) -> g::Result<()> {
+    async fn on_connected(&self, conn: &Ptr<Self::U>) -> g::Result<()> {
         tracing::debug!("[{:?} - {:?}] has connected", conn.sockfd(), conn.remote());
         Ok(())
     }
@@ -60,7 +60,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     /// # 触发
     ///
     /// 在会话端连接断开后触发.
-    async fn on_disconnected(&self, conn: &ConnPtr<Self::U>) {
+    async fn on_disconnected(&self, conn: &Ptr<Self::U>) {
         tracing::debug!("[{:?} - {:?}] has disconnected", conn.sockfd(), conn.remote());
     }
 
@@ -69,7 +69,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
     /// # 触发
     ///
     /// 在会话端成功解析消息后触发.
-    async fn on_process(&self, conn: &ConnPtr<Self::U>, req: Packet) -> g::Result<()>;
+    async fn on_process(&self, conn: &Ptr<Self::U>, req: Packet) -> g::Result<()>;
 
     /// 服务端运行事件
     ///
@@ -153,16 +153,16 @@ impl<T: IEvent> Server<T> {
     /// use tg::nw::server::Server;
     /// use async_trait::async_trait;
     ///
-    /// #[derive(Copy, Clone, Default)]
+    /// #[derive(Clone, Default)]
     /// struct DemoEvent;
     ///
     /// #[async_trait]
     /// impl tg::nw::server::IEvent for DemoEvent {
     ///     type U = ();
     ///
-    ///     async fn on_process(&self, conn: &tg::nw::conn::ConnPtr<()>, req: &tg::nw::pack::Package) -> tg::g::Result<Option<tg::nw::pack::LinearItem>> {
+    ///     async fn on_process(&self, conn: &tg::nw::conn::Ptr<()>, req: tg::nw::server::Packet) -> tg::g::Result<()> {
     ///         println!("{:?} => {:?}", conn.remote(), req.data());
-    ///         Ok(None)
+    ///         Ok(())
     ///     }
     /// }
     ///

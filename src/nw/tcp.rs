@@ -1,4 +1,4 @@
-use super::{server::Server, conn::{ConnPool, ConnPtr}};
+use super::{server::Server, conn::{Pool, Ptr}};
 use futures::StreamExt;
 use crate::g;
 use std::sync::{atomic::Ordering, Arc};
@@ -23,7 +23,7 @@ use tokio::{
 /// `conn_pool` Conn<T::U> object pool.
 pub async fn server_run<'a, T>(
     server: Arc<Server<T>>,
-    conn_pool: &'static ConnPool<'a, T::U>,
+    conn_pool: &'static Pool<'a, T::U>,
 ) -> g::Result<()>
 where
     T: super::server::IEvent,
@@ -125,7 +125,7 @@ where
 ///
 async fn conn_handle<'a, T: super::server::IEvent>(
     stream: TcpStream,
-    conn: ConnPtr<'_, T::U>,
+    conn: Ptr<'_, T::U>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
     event: T,
@@ -222,7 +222,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
 }
 
 async fn conn_write_handle<'a, T: super::server::IEvent>(
-    conn: ConnPtr<'_, T::U>,
+    conn: Ptr<'_, T::U>,
     event: T,
     mut writer: tokio::net::tcp::OwnedWriteHalf, 
     mut srx: tokio::sync::broadcast::Receiver<u8>) {

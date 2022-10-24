@@ -10,14 +10,14 @@ impl tg::nw::server::IEvent for SimpleEvent {
 
     async fn on_process(
         &self,
-        conn: &tg::nw::conn::ConnPtr<()>,
+        conn: &tg::nw::conn::Ptr<()>,
         req: tg::nw::server::Packet,
     ) -> tg::g::Result<()> {
         assert_eq!(req.idempotent(), conn.recv_seq());
         Ok(())
     }
 
-    async fn on_disconnected(&self, conn: &tg::nw::conn::ConnPtr<()>) {
+    async fn on_disconnected(&self, conn: &tg::nw::conn::Ptr<()>) {
         tracing::debug!(
             "[{:?}|{:?}] has disconnected: {}",
             conn.sockfd(),
