@@ -250,9 +250,8 @@ pub async fn connect<T: super::server::IEvent>(host: &str, timeout: u64, shutdow
         Ok(v) => v,
         Err(err) => return Err(g::Err::TcpConnectFailed(format!("{err}"))),
     };
-    tracing::info!("----------------1");
+
     let event = T::default();
     conn_handle(stream, conn, timeout, shutdown_rx, event).await;
-    tracing::info!("----------------2");
     Ok(())
 }

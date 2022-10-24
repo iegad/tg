@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use tg::nw::packet::REQ_POOL;
 
 #[derive(Clone, Default)]
 struct EchoEvent;
@@ -14,12 +15,10 @@ impl tg::nw::server::IEvent for EchoEvent {
         conn: &tg::nw::conn::Ptr<()>,
         req: tg::nw::server::Packet,
     ) -> tg::g::Result<()> {
-        if let Err(err) = conn.send(req) {
-            tracing::error!("on_process: {err}");
-            Err(tg::g::Err::Custom("DOS".to_string()))
-        } else {
-            Ok(())
+        if req.idempotent() == 10000 {
+            conn.shutdown();
         }
+        Ok(())
     }
 
     #[allow(unused_variables)]
@@ -43,18 +42,28 @@ async fn main() {
     }
     
     let conn = Arc::new(CONN_POOL.pull());
+    let controller = conn.clone();
     let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel(1);
 
     let join = tokio::spawn(async move {
         tg::nw::tcp::connect::<EchoEvent>("127.0.0.1:6688", 0, shutdown_rx, conn).await.unwrap();
     });
 
-    match tokio::signal::ctrl_c().await {
-        Err(err) => tracing::error!("SIGINT error: {err}"),
-        Ok(()) => {
-            shutdown_tx.send(1).unwrap();
-        }
+    for i in 0..10000 {
+        let mut p = REQ_POOL.pull();
+        p.set(1, i + 1, "Hello world".as_bytes());
+        controller.send(p).unwrap();
     }
+
+    tracing::info!("send done");
+    tokio::spawn(async move {
+        match tokio::signal::ctrl_c().await {
+            Err(err) => tracing::error!("SIGINT error: {err}"),
+            Ok(()) => {
+                shutdown_tx.send(1).unwrap();
+            }
+        }
+    });
 
     join.await.unwrap();
 }
