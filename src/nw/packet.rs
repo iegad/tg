@@ -22,6 +22,7 @@ impl Packet {
         Self(Vec::with_capacity(g::DEFAULT_BUF_SIZE))
     }
 
+    #[allow(clippy::uninit_vec)]
     pub fn with(id: u16, idempotent: u32, data: &[u8]) -> Self {
         let dlen = data.len();
         assert!(dlen <= Self::MAX_DATA_SIZE);
@@ -197,9 +198,8 @@ impl Builder {
     #[inline(always)]
     pub fn reset(&mut self) {
         self.pos = 0;
-        match self.current.as_deref_mut() {
-            Some(v) => v.reset(),
-            None => (),
+        if let Some(v) = self.current.as_deref_mut() {
+            v.reset();
         }
     }
 
@@ -209,7 +209,7 @@ impl Builder {
 
         // step 1: 确认 buf 可读位置和 未读长度
         let mut bufpos = self.pos;
-        buflen = buflen - bufpos;
+        buflen -= bufpos;
 
         if buflen == 0 {
             return Ok(None);
@@ -239,10 +239,8 @@ impl Builder {
             }
 
             // 检查消息头, 如果检查失败, 直接将失败的结果返回
-            if current_len == Packet::HEAD_SIZE {
-                if current.id() == 0 || current.idempotent() == 0 || !current.check_hc() {
-                    return Err(g::Err::PackHeadInvalid);
-                }
+            if current_len == Packet::HEAD_SIZE && (current.id() == 0 || current.idempotent() == 0 || !current.check_hc()) {
+                return Err(g::Err::PackHeadInvalid);
             }
         }
 

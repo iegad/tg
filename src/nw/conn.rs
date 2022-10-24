@@ -93,6 +93,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     /// # Notes
     /// 
     /// 当会话端从对象池中被取出来时, 处于未激活状态, 未激活的会话端不能正常使用.
+    #[allow(clippy::cast_ref_to_mut)]
     pub(crate) fn setup(
         &self,
         reader: &'a tokio::net::tcp::OwnedReadHalf
@@ -126,39 +127,22 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     /// 获取原始套接字
     #[inline(always)]
     pub fn sockfd(&self) -> Option<super::Socket> {
-        if let Some(r) = self.reader {
-            #[cfg(windows)]
-            { Some(r.as_ref().as_raw_socket())}
-            #[cfg(unix)]
-            { Some(r.as_ref().as_raw_fd()) }    
-        } else {
-            None
-        }
+        #[cfg(windows)]
+        { self.reader.map(|r|r.as_ref().as_raw_socket()) }
+
+        #[cfg(unix)]
+        { self.reader.map(|r|r.as_ref().as_raw_fd()) }   
     }
 
     /// 获取对端地址
     #[inline(always)]
     pub fn remote(&self) -> Option<SocketAddr> {
-        if let Some(r) = self.reader {
-            match r.as_ref().peer_addr() {
-                Err(err) => { 
-                    tracing::error!("get remote failed: {err}");
-                    None
-                }
-                Ok(v) => Some(v),
-            } 
-        } else {
-            None
-        }
+        self.reader.map(|r|r.as_ref().peer_addr().unwrap())
     }
 
     #[inline(always)]
     pub fn local(&self) -> Option<SocketAddr> {
-        if let Some(r) = self.reader {
-            Some(r.as_ref().local_addr().unwrap())
-        } else {
-            None
-        }
+        self.reader.map(|r|r.as_ref().local_addr().unwrap())
     }
 
     /// 关闭会话端
@@ -181,6 +165,9 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         }
     }
 
+    #[allow(clippy::mut_from_ref)]
+    #[allow(clippy::cast_ref_to_mut)]
+    #[inline(always)]
     pub(crate) fn builder(&self) -> &mut packet::Builder {
         unsafe { &mut *(&self.builder as *const packet::Builder as *mut packet::Builder) }
     }
@@ -227,6 +214,8 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         self.user_data.as_ref()
     }
 
+    #[allow(clippy::mut_from_ref)]
+    #[allow(clippy::cast_ref_to_mut)]
     #[inline(always)]
     pub fn rbuf_mut(&self) -> &mut [u8] {
         unsafe { &mut *(&self.rbuf as *const [u8] as *mut [u8]) }
@@ -237,6 +226,8 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         &self.rbuf[..n]
     }
 
+    #[allow(clippy::mut_from_ref)]
+    #[allow(clippy::cast_ref_to_mut)]
     #[inline(always)]
     pub(crate) fn rx(&self) -> &mut futures::channel::mpsc::Receiver<server::Packet> {
         use futures::channel::mpsc::Receiver;
@@ -244,6 +235,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     }
 
     /// 发送消息
+    #[allow(clippy::cast_ref_to_mut)]
     #[inline]
     pub fn send(&self, data: super::server::Packet) -> g::Result<()> {
         unsafe {

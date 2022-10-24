@@ -125,7 +125,7 @@ where
 ///
 async fn conn_handle<'a, T: super::server::IEvent>(
     stream: TcpStream,
-    conn: ConnPtr<'a, T::U>,
+    conn: ConnPtr<'_, T::U>,
     timeout: u64,
     mut shutdown_rx: broadcast::Receiver<u8>,
     event: T,
@@ -147,7 +147,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     let interval = if timeout == 0 { 60 * 60} else { timeout };
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
 
-    if let Err(_) = event.on_connected(&conn).await {
+    if event.on_connected(&conn).await.is_err() {
         return;
     }
 
@@ -203,7 +203,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
 
                     conn.recv_seq_incr();
                     conn.set_idempotent(pkt.idempotent());
-                    if let Err(_) = event.on_process(&conn, pkt).await {
+                    if event.on_process(&conn, pkt).await.is_err() {
                         break 'read_loop;
                     }
 
@@ -222,11 +222,10 @@ async fn conn_handle<'a, T: super::server::IEvent>(
 }
 
 async fn conn_write_handle<'a, T: super::server::IEvent>(
-    conn: ConnPtr<'a, T::U>,
+    conn: ConnPtr<'_, T::U>,
     event: T,
     mut writer: tokio::net::tcp::OwnedWriteHalf, 
     mut srx: tokio::sync::broadcast::Receiver<u8>) {
-
     'write_loop: loop {
         select! {
             _ = srx.recv() => {
