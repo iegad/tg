@@ -54,7 +54,6 @@ time = { version = "0.3", features = ["macros"] }
 tokio = { version = "1.21.2", features = ["full", "tracing"] }
 tokio-tungstenite = "0.17.2" # websocket for rust
 tonic = "0.8.1" # grpc for rust
-tonic-build = "0.8.0"
 tracing-appender = "0.2.2"
 tracing = "0.1.36"
 tracing-subscriber = { version = "0.3.15", features = ["env-filter", "time", "local-time"] }
@@ -70,3 +69,6 @@ lto = "fat"
 
 [build]
 rustflags = ["-C target-cpu=native"]
+
+[build-dependencies]
+tonic-build = { version = "0.8.0", features = ["prost"] }

@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package warsong;
+
+message LogInfo {
+    string TraceID    = 1;
+    int32  Level      = 2;
+    string Service    = 3;
+    string Title      = 4;
+    string Content    = 5;
+    int64  CreateTime = 6;
+    int64  LastUpdate = 7;
+    int64  ExpireTime = 8;
+}
+
+message WriteLogReq {
+    LogInfo log = 1;
+}
+
+message WriteLogRsp {
+    int32  Code = 1;
+    string Error = 2;
+}
+
+message GetLogReq {
+    string TraceID       = 1;
+    int32  Level         = 2;
+    string Service       = 3;
+    string Content       = 4;
+    int64  CreateTimeBeg = 5;
+    int64  CreateTimeEnd = 6;
+    int64  Pos           = 7;
+    int64  Offset        = 8;
+}
+
+message GetLogRsp {
+    int32            Code       = 1;
+    string           Error      = 2;
+    repeated LogInfo DataList   = 3;
+    uint64           TotalCount = 4;
+}
+
+service WarSong {
+    rpc WriteLog(WriteLogReq) returns (WriteLogRsp) {}
+    rpc GetLog(GetLogReq) returns (GetLogRsp) {}
+}
