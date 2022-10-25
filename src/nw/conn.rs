@@ -95,7 +95,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     /// 
     /// 当会话端从对象池中被取出来时, 处于未激活状态, 未激活的会话端不能正常使用.
     #[allow(clippy::cast_ref_to_mut)]
-    pub(crate) fn setup(
+    pub(crate) fn load(
         &self,
         reader: &'a tokio::net::tcp::OwnedReadHalf
     ) -> broadcast::Receiver<u8> {
@@ -138,12 +138,12 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     /// 获取对端地址
     #[inline(always)]
     pub fn remote(&self) -> Option<SocketAddr> {
-        self.reader.map(|r|r.as_ref().peer_addr().unwrap())
+        self.reader.map(|r|r.as_ref().peer_addr().expect("peer_addr called failed"))
     }
 
     #[inline(always)]
     pub fn local(&self) -> Option<SocketAddr> {
-        self.reader.map(|r|r.as_ref().local_addr().unwrap())
+        self.reader.map(|r|r.as_ref().local_addr().expect("local_addr called failed"))
     }
 
     /// 关闭会话端

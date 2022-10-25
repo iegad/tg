@@ -1,10 +1,10 @@
-use super::{server::{Server, self}, conn::{self, Group}, packet};
+use super::{server::{Server, self}, client, conn};
 use futures::StreamExt;
 use crate::g;
 use std::sync::{atomic::Ordering, Arc};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpSocket, TcpStream},
+    net::{TcpSocket, TcpStream, tcp::OwnedWriteHalf},
     select,
     sync::broadcast,
 };
@@ -21,10 +21,7 @@ use tokio::{
 /// `server` Arc<ServerPtr<T>> instance.
 ///
 /// `conn_pool` Conn<T::U> object pool.
-pub async fn server_run<'a, T>(
-    server: Arc<Server<T>>,
-    conn_pool: &'static conn::Pool<'a, T::U>,
-) -> g::Result<()>
+pub async fn server_run<'a, T>(server: Arc<Server<T>>, conn_pool: &'static conn::Pool<'a, T::U>) -> g::Result<()>
 where
     T: super::server::IEvent,
     T::U: Default + Sync + Send,
@@ -133,7 +130,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
 ) {
     // step 1: get socket reader and writer
     let (mut reader, writer) = stream.into_split();
-    let mut srx = conn.setup(&reader);
+    let mut srx = conn.load(&reader);
     let srxc = srx.resubscribe();
     
     let eventc = event.clone();
@@ -245,67 +242,25 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
     }
 }
 
-pub async fn group_run(gp: Arc<Group>) {
-    let host = Arc::new(gp.host().to_string());
-    let n = gp.count();
-    let mut ja = Vec::new();
+pub async fn client_run<'a, T: client::IEvent>(host: &str, cli: client::Ptr<'_, T::U>) -> g::Result<()> {
+    let stream = match TcpStream::connect(host).await {
+        Err(err) => {
+            return Err(g::Err::TcpConnectFailed(format!("{err}")));
+        },
+        Ok(v) => v,
+    };
 
-    for _ in 0..n {
-        let tx = gp.sender();
-        let rx = gp.receiver();
-        let shutdown_tx = gp.shutdown_tx();
-        let addr = host.clone();
-
-        let j = tokio::spawn(async move {
-            cli_handle(addr, tx, rx, shutdown_tx).await;
-        });
-
-        ja.push(j);
-    }
-
-    futures_util::future::join_all(ja).await;
-}
-
-async fn cli_handle(
-    host: Arc<String>, 
-    tx: async_channel::Sender<server::Packet>,
-    rx: async_channel::Receiver<server::Packet>, 
-    shutdown_tx: tokio::sync::broadcast::Sender<u8>) {
-
-    let stream = TcpStream::connect(&*host).await.unwrap();
-    let (mut reader, mut writer) = stream.into_split();
-    let mut write_shutdown_rx = shutdown_tx.subscribe();
+    let event = T::default();
+    let (mut reader, writer) = stream.into_split();
+    let (shutdown_tx, rx) = cli.load(&reader);
     let mut shutdown_rx = shutdown_tx.subscribe();
-    let mut builder = packet::Builder::new();
+    let builder = cli.builder();
+    let mut rbuf = [0u8; g::DEFAULT_BUF_SIZE];
 
-    // 开启写协程
-    tokio::spawn(async move {
-        'write_loop: loop {
-            select! {
-                _ = write_shutdown_rx.recv() => {
-                    break 'write_loop;
-                }
-
-                result_recv = rx.recv() => {
-                    let pkt = match result_recv {
-                        Err(err) => {
-                            tracing::error!("{err}");
-                            break 'write_loop;
-                        }
-
-                        Ok(v) => v,
-                    };
-
-                    if let Err(err) = writer.write_all(pkt.raw()).await {
-                        tracing::error!("{err}");
-                        break 'write_loop;
-                    }
-                }
-            }
-        }
+    let j = tokio::spawn(async move {
+        cli_write_handle(writer, shutdown_tx, rx).await;
     });
 
-    let mut rbuf = [0u8; g::DEFAULT_BUF_SIZE];
     'read_loop: loop {
         select! {
             _ = shutdown_rx.recv() => {
@@ -314,28 +269,21 @@ async fn cli_handle(
 
             result_read = reader.read(&mut rbuf) => {
                 let n = match result_read {
-                    Ok(0) => {
-                        shutdown_tx.send(1).expect("shutdown_tx.send failed");
+                    Err(err) => {
+                        event.on_error(&cli, g::Err::IOReadFailed(format!("{err}"))).await;
                         break 'read_loop;
                     }
 
                     Ok(v) => v,
-                    Err(err) => {
-                        tracing::error!("{err}");
-                        shutdown_tx.send(1).expect("shutdown_tx.send failed");
-                        break 'read_loop;
-                    }
                 };
 
                 'pack_loop: loop {
                     let option_pkt = match builder.parse(&rbuf[..n]) {
+                        Ok(v) => v,
                         Err(err) => {
-                            tracing::error!("{err}");
-                            shutdown_tx.send(1).expect("shutdown_tx.send failed");
+                            event.on_error(&cli, err).await;
                             break 'read_loop;
                         }
-
-                        Ok(v) => v,
                     };
 
                     let (pkt, next) = match option_pkt {
@@ -343,11 +291,46 @@ async fn cli_handle(
                         Some(v) => v,
                     };
 
-                    tracing::info!("{}", *pkt);
+                    if event.on_process(&cli, pkt).await.is_err() {
+                        break 'read_loop;
+                    }
 
                     if !next {
                         break 'pack_loop;
                     }
+                }
+            }
+        }
+    }
+
+    j.await.unwrap();
+    Ok(())
+}
+
+async fn cli_write_handle(mut writer: OwnedWriteHalf, shutdown_tx: broadcast::Sender<u8>, rx: async_channel::Receiver<server::Packet>) {
+    let mut shutdown_rx = shutdown_tx.subscribe();
+
+    'write_loop: loop {
+        select! {
+            _ = shutdown_rx.recv() => {
+                break 'write_loop;
+            }
+
+            result_pkt = rx.recv() => {
+                let pkt = match result_pkt {
+                    Err(err) => {
+                        tracing::error!("{err}");
+                        shutdown_tx.send(1).expect("shutdown_tx.send failed");
+                        break 'write_loop;
+                    }
+
+                    Ok(v) => v,
+                };
+                tracing::info!("--------- send --------- {}", pkt.idempotent());
+                if let Err(err) = writer.write_all(pkt.raw()).await {
+                    tracing::error!("{err}");
+                    shutdown_tx.send(1).expect("shutdown_tx.send failed");
+                    break 'write_loop;
                 }
             }
         }
