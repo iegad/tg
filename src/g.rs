@@ -129,6 +129,10 @@ pub enum Err {
     /// 缓冲区大小无效
     BufSizeInvalid,
 
+    PackSendFailed(String),
+
+    PackRecvFailed(String),
+
     // ---------------------------------------------- piper 错误定义 ----------------------------------------------
     //
     //

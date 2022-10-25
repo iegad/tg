@@ -3,10 +3,11 @@ use std::os::unix::prelude::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::prelude::AsRawSocket;
 use std::{net::SocketAddr, sync::Arc};
+use futures::channel::mpsc;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
-use tokio::{sync::broadcast};
+use tokio::{sync::broadcast, net::tcp::OwnedReadHalf};
 use crate::g;
-use super::{packet, server};
+use super::{packet, server, Socket};
 
 // ---------------------------------------------- nw::Conn<U> ----------------------------------------------
 //
@@ -30,23 +31,23 @@ pub struct Conn<'a, U: Default + Send + Sync + 'static> {
     idempotent: u32,
     send_seq: u32,
     recv_seq: u32,
-    reader: Option<&'a tokio::net::tcp::OwnedReadHalf>,
+    reader: Option<&'a OwnedReadHalf>,
     rbuf: [u8; g::DEFAULT_BUF_SIZE],
     user_data: Option<U>,
     builder: packet::Builder,
     // contorller
     shutdown_tx: broadcast::Sender<u8>,        // 会话关闭管道
-    tx: futures::channel::mpsc::Sender<super::server::Packet>,
-    rx: futures::channel::mpsc::Receiver<super::server::Packet>
+    tx: mpsc::Sender<server::Packet>,
+    rx: mpsc::Receiver<server::Packet>
 }
 
 impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     /// # Conn<U>::new
     ///
     /// 创建默认的会话端实例, 该函数由框架内部调用, 用于 对象池的初始化
-    pub fn new() -> Self {
+    fn new() -> Self {
         let (shutdown_sender, _) = broadcast::channel(1);
-        let (tx, rx) = futures::channel::mpsc::channel(g::DEFAULT_CHAN_SIZE);
+        let (tx, rx) = mpsc::channel(g::DEFAULT_CHAN_SIZE);
         Self {
             idempotent: 0,
             send_seq: 0,
@@ -126,7 +127,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
 
     /// 获取原始套接字
     #[inline(always)]
-    pub fn sockfd(&self) -> Option<super::Socket> {
+    pub fn sockfd(&self) -> Option<Socket> {
         #[cfg(windows)]
         { self.reader.map(|r|r.as_ref().as_raw_socket()) }
 
@@ -229,9 +230,8 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     #[allow(clippy::mut_from_ref)]
     #[allow(clippy::cast_ref_to_mut)]
     #[inline(always)]
-    pub(crate) fn rx(&self) -> &mut futures::channel::mpsc::Receiver<server::Packet> {
-        use futures::channel::mpsc::Receiver;
-        unsafe {&mut *(&self.rx as *const Receiver<server::Packet> as *mut Receiver<server::Packet>) }
+    pub(crate) fn rx(&self) -> &mut mpsc::Receiver<server::Packet> {
+        unsafe {&mut *(&self.rx as *const mpsc::Receiver<server::Packet> as *mut mpsc::Receiver<server::Packet>) }
     }
 
     /// 发送消息
@@ -252,5 +252,71 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
 impl<'a, U: Default + Sync + Send> Drop for Conn<'a, U> {
     fn drop(&mut self) {
         tracing::warn!("{:?} has released", self.sockfd());
+    }
+}
+
+pub struct Group {
+    host: String,
+    count: usize,
+    tx: async_channel::Sender<server::Packet>,
+    rx: async_channel::Receiver<server::Packet>,
+    shutdown: tokio::sync::broadcast::Sender<u8>,
+}
+
+impl Group {
+    pub fn new(host: &str, count: usize) -> Self {
+        let (tx, rx) = async_channel::bounded(g::DEFAULT_CHAN_SIZE);
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+
+        Self {
+            host: host.to_string(),
+            count,
+            tx,
+            rx,
+            shutdown,
+        }
+    }
+
+    pub fn new_arc(host: &str, count: usize) -> Arc<Self> {
+        Arc::new(Self::new(host, count))
+    }
+
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    pub async fn send(&self, pkt: server::Packet) -> g::Result<()> {
+        if let Err(err) = self.tx.send(pkt).await {
+            return Err(g::Err::PackSendFailed(format!("{err}")));
+        }
+
+        Ok(())
+    }
+
+    pub fn sender(&self) -> async_channel::Sender<server::Packet> {
+        self.tx.clone()
+    }
+
+    pub fn shutdown(&self) {
+        if let Err(err) = self.shutdown.send(1) {
+            tracing::error!("{err}");
+            assert!(false);
+        }
+    }
+
+    pub fn receiver(&self) -> async_channel::Receiver<server::Packet> {
+        self.rx.clone()
+    }
+
+    pub fn shutdown_rx(&self) -> tokio::sync::broadcast::Receiver<u8> {
+        self.shutdown.subscribe()
+    }
+
+    pub fn shutdown_tx(&self) -> tokio::sync::broadcast::Sender<u8> {
+        self.shutdown.clone()
     }
 }

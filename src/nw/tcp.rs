@@ -1,4 +1,4 @@
-use super::{server::Server, conn};
+use super::{server::{Server, self}, conn::{self, Group}, packet};
 use futures::StreamExt;
 use crate::g;
 use std::sync::{atomic::Ordering, Arc};
@@ -245,13 +245,111 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
     }
 }
 
-pub async fn connect<T: super::server::IEvent>(host: &str, timeout: u64, shutdown_rx: tokio::sync::broadcast::Receiver<u8>, conn: super::conn::Ptr<'static, T::U>) -> g::Result<()> {
-    let stream = match TcpStream::connect(host).await {
-        Ok(v) => v,
-        Err(err) => return Err(g::Err::TcpConnectFailed(format!("{err}"))),
-    };
+pub async fn group_run(gp: Arc<Group>) {
+    let host = Arc::new(gp.host().to_string());
+    let n = gp.count();
+    let mut ja = Vec::new();
 
-    let event = T::default();
-    conn_handle(stream, conn, timeout, shutdown_rx, event).await;
-    Ok(())
+    for _ in 0..n {
+        let tx = gp.sender();
+        let rx = gp.receiver();
+        let shutdown_tx = gp.shutdown_tx();
+        let addr = host.clone();
+
+        let j = tokio::spawn(async move {
+            cli_handle(addr, tx, rx, shutdown_tx).await;
+        });
+
+        ja.push(j);
+    }
+
+    futures_util::future::join_all(ja).await;
+}
+
+async fn cli_handle(
+    host: Arc<String>, 
+    tx: async_channel::Sender<server::Packet>,
+    rx: async_channel::Receiver<server::Packet>, 
+    shutdown_tx: tokio::sync::broadcast::Sender<u8>) {
+
+    let stream = TcpStream::connect(&*host).await.unwrap();
+    let (mut reader, mut writer) = stream.into_split();
+    let mut write_shutdown_rx = shutdown_tx.subscribe();
+    let mut shutdown_rx = shutdown_tx.subscribe();
+    let mut builder = packet::Builder::new();
+
+    // 开启写协程
+    tokio::spawn(async move {
+        'write_loop: loop {
+            select! {
+                _ = write_shutdown_rx.recv() => {
+                    break 'write_loop;
+                }
+
+                result_recv = rx.recv() => {
+                    let pkt = match result_recv {
+                        Err(err) => {
+                            tracing::error!("{err}");
+                            break 'write_loop;
+                        }
+
+                        Ok(v) => v,
+                    };
+
+                    if let Err(err) = writer.write_all(pkt.raw()).await {
+                        tracing::error!("{err}");
+                        break 'write_loop;
+                    }
+                }
+            }
+        }
+    });
+
+    let mut rbuf = [0u8; g::DEFAULT_BUF_SIZE];
+    'read_loop: loop {
+        select! {
+            _ = shutdown_rx.recv() => {
+                break 'read_loop;
+            }
+
+            result_read = reader.read(&mut rbuf) => {
+                let n = match result_read {
+                    Ok(0) => {
+                        shutdown_tx.send(1).expect("shutdown_tx.send failed");
+                        break 'read_loop;
+                    }
+
+                    Ok(v) => v,
+                    Err(err) => {
+                        tracing::error!("{err}");
+                        shutdown_tx.send(1).expect("shutdown_tx.send failed");
+                        break 'read_loop;
+                    }
+                };
+
+                'pack_loop: loop {
+                    let option_pkt = match builder.parse(&rbuf[..n]) {
+                        Err(err) => {
+                            tracing::error!("{err}");
+                            shutdown_tx.send(1).expect("shutdown_tx.send failed");
+                            break 'read_loop;
+                        }
+
+                        Ok(v) => v,
+                    };
+
+                    let (pkt, next) = match option_pkt {
+                        None => break 'pack_loop,
+                        Some(v) => v,
+                    };
+
+                    tracing::info!("{}", *pkt);
+
+                    if !next {
+                        break 'pack_loop;
+                    }
+                }
+            }
+        }
+    }
 }

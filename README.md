@@ -30,8 +30,8 @@ Packets: 10000
 
 公式: 并发数 / 响应时长 * CPU Cores
       
-1. Total: 9883263  micro seconds.    QPS: 500,000 / (0.9883263 * 2) = 252,952.896 / s
-2. Total: 10517879 micro seconds.    QPS: 500,000 / (1.0517879 * 2) = 237,690.508 / s
-3. Total: 15877858 micro seconds.    QPS: 500,000 / (1.5877858 * 2) = 157,451.969 / s
-4. Total: 8654372  micro seconds.    QPS: 500,000 / (0.8654372 * 2) = 288.871.336 / s
-4. Total: 9369455  micro seconds.    QPS: 500,000 / (0.9369455 * 2) = 266,824.484 / s
+1. Total: 9883263  micro seconds.    QPS: 500,000 / (9.883263 * 2) = 25,295.2896 / s
+2. Total: 10517879 micro seconds.    QPS: 500,000 / (10.517879 * 2) = 23,769.0508 / s
+3. Total: 15877858 micro seconds.    QPS: 500,000 / (15.877858 * 2) = 15,745.1969 / s
+4. Total: 8654372  micro seconds.    QPS: 500,000 / (8.654372 * 2) = 28,887.1336 / s
+4. Total: 9369455  micro seconds.    QPS: 500,000 / (9.369455 * 2) = 26,682.4484 / s

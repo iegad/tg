@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 use crate::g;
 
@@ -182,6 +184,12 @@ impl Default for Packet {
     }
 }
 
+impl Display for Packet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Packet[id: {}, idempotent: {}, raw_len: {}, data: {}]", self.id(), self.idempotent(), self.raw_len(), hex::encode(self.data()))
+    }
+}
+
 pub struct Builder {
     current: Option<LinearReusable<'static, Packet>>,
     pos: usize
@@ -294,7 +302,7 @@ impl Default for Builder {
 
 #[cfg(test)]
 mod test_packet {
-    use super::Packet;
+    use super::{Packet, Builder};
 
     #[test]
     fn packet_basic() {
@@ -334,10 +342,9 @@ mod test_packet {
             buf.extend_from_slice(pkt.raw());
         }
 
-        let mut builder = super::Builder::new();
+        let mut builder = Builder::new();
 
         for i in 0..1000 {
-            tracing::debug!("------------------------------ {i}");
             let option_pkt = match builder.parse(&mut buf) {
                 Err(err) => panic!("{err}"),
                 Ok(v) => v,
