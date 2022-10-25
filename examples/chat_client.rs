@@ -40,7 +40,7 @@ async fn main() {
         }
     });
     
-    for i in 0..1 {
+    for i in 0..100 {
         let mut pkt = REQ_POOL.pull();
         pkt.set(1, i + 1, "Hello world".as_bytes());
 

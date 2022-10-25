@@ -62,7 +62,7 @@ pub struct Client<'a, U: Default + Send + Sync + 'static> {
 
 impl<'a, U: Default + Send + Sync + 'static> Client<'a, U> {
     pub fn new(shutdown_tx: broadcast::Sender<u8>) -> Self {
-        let (tx, rx) = async_channel::bounded(1);
+        let (tx, rx) = async_channel::bounded(g::DEFAULT_CHAN_SIZE);
 
         Self { 
             idempotent: 0, 
