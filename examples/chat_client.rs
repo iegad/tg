@@ -11,6 +11,9 @@ impl tg::nw::client::IEvent for EchoEvent {
 
     async fn on_process(&self, cli: &tg::nw::client::Ptr<()>, req: tg::nw::server::Packet) -> tg::g::Result<()> {
         tracing::info!("[{:?}] {}", cli.remote(), *req);
+        if req.idempotent() == 10000 {
+            cli.shutdown();
+        }
         Ok(())
     }
 
@@ -40,7 +43,7 @@ async fn main() {
         }
     });
     
-    for i in 0..100 {
+    for i in 0..10000 {
         let mut pkt = REQ_POOL.pull();
         pkt.set(1, i + 1, "Hello world".as_bytes());
 
@@ -49,8 +52,7 @@ async fn main() {
             break;
         }
     }
-
-    tracing::info!("send done");
-
+    
     j.await.unwrap();
+    tracing::info!("done");
 }
