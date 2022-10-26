@@ -10,22 +10,13 @@ impl tg::nw::client::IEvent for EchoEvent {
     type U = ();
 
     async fn on_process(&self, cli: &tg::nw::client::Ptr<()>, req: tg::nw::server::Packet) -> tg::g::Result<()> {
-        tracing::info!("[{:?}] {}", cli.remote(), *req);
+        assert_eq!(cli.recv_seq(), req.idempotent());
+        assert_eq!("Hello world".to_string(), std::str::from_utf8(req.data()).unwrap());
+        assert_eq!(1, req.id());
         if req.idempotent() == 10000 {
             cli.shutdown();
         }
         Ok(())
-    }
-
-    #[allow(unused_variables)]
-    async fn on_connected(&self, cli: &tg::nw::client::Ptr<()>) -> tg::g::Result<()> {
-        // tracing::info!("[{:?}] has connected", conn.remote());
-        Ok(())
-    }
-
-    #[allow(unused_variables)]
-    async fn on_disconnected(&self, cli: &tg::nw::client::Ptr<()>) {
-        tracing::info!("[{:?} - {:?}] has disconnected: {}", cli.sockfd(), cli.remote(), cli.send_seq());
     }
 }
 
@@ -38,9 +29,7 @@ async fn main() {
     let controller = cli.clone();
 
     let j = tokio::spawn(async move {
-        if let Err(err) = tg::nw::tcp::client_run::<EchoEvent>("127.0.0.1:6688", cli).await {
-            tracing::error!("{err}");
-        }
+        tg::nw::tcp::client_run::<EchoEvent>("127.0.0.1:6688", cli).await;
     });
     
     for i in 0..10000 {

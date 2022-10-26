@@ -264,24 +264,37 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
     }
 }
 
-pub async fn client_run<'a, T: client::IEvent>(host: &str, cli: client::Ptr<'_, T::U>) -> g::Result<()> {
+pub async fn client_run<T: client::IEvent>(host: &str, cli: client::Ptr<'static, T::U>) {
+    let event = T::default();
+
     let stream = match TcpStream::connect(host).await {
         Err(err) => {
-            return Err(g::Err::TcpConnectFailed(format!("{err}")));
+            event.on_error(&cli, g::Err::TcpConnectFailed(format!("{err}"))).await;
+            return;
         },
         Ok(v) => v,
     };
 
-    let event = T::default();
     let (mut reader, writer) = stream.into_split();
-    let (shutdown_tx, rx) = cli.load(&reader);
-    let mut shutdown_rx = shutdown_tx.subscribe();
+    let (shutdown_rx_, rx) = cli.load(&reader);
+
+    // for read
+    
+    let mut shutdown_rx = shutdown_rx_.resubscribe();
     let builder = cli.builder();
     let mut rbuf = [0u8; g::DEFAULT_BUF_SIZE];
 
-    let j = tokio::spawn(async move {
-        cli_write_handle(writer, shutdown_tx, rx).await;
+    // for write
+    let event_ = event.clone();
+    let cli_ = cli.clone();
+
+    let w_fut = tokio::spawn(async move {
+        cli_write_handle(cli_, event_, writer, shutdown_rx_, rx).await;
     });
+
+    if event.on_connected(&cli).await.is_err() {
+        return;
+    }
 
     'read_loop: loop {
         select! {
@@ -313,10 +326,15 @@ pub async fn client_run<'a, T: client::IEvent>(host: &str, cli: client::Ptr<'_, 
                         Some(v) => v,
                     };
 
-                    if event.on_process(&cli, pkt).await.is_err() {
-                        break 'read_loop;
+                    let idempotent = pkt.idempotent();
+                    if idempotent > cli.idempotent() {
+                        cli.recv_seq_incr();
+                        if event.on_process(&cli, pkt).await.is_err() {
+                            break 'read_loop;
+                        }
                     }
 
+                    cli.set_idempotent(idempotent);
                     if !next {
                         break 'pack_loop;
                     }
@@ -325,12 +343,16 @@ pub async fn client_run<'a, T: client::IEvent>(host: &str, cli: client::Ptr<'_, 
         }
     }
 
-    j.await.unwrap();
-    Ok(())
+    w_fut.await.unwrap();
+    event.on_disconnected(&cli).await;
 }
 
-async fn cli_write_handle(mut writer: OwnedWriteHalf, shutdown_tx: broadcast::Sender<u8>, rx: async_channel::Receiver<server::Packet>) {
-    let mut shutdown_rx = shutdown_tx.subscribe();
+async fn cli_write_handle<T: client::IEvent>(
+    cli: client::Ptr<'static, T::U>,
+    event: T,
+    mut writer: OwnedWriteHalf, 
+    mut shutdown_rx: broadcast::Receiver<u8>,
+    rx: async_channel::Receiver<server::Packet>) {
 
     'write_loop: loop {
         select! {
@@ -341,20 +363,20 @@ async fn cli_write_handle(mut writer: OwnedWriteHalf, shutdown_tx: broadcast::Se
             result_pkt = rx.recv() => {
                 let pkt = match result_pkt {
                     Err(err) => {
-                        tracing::error!("{err}");
-                        shutdown_tx.send(1).expect("shutdown_tx.send failed");
+                        event.on_error(&cli, g::Err::AsyncRecvError(format!("{err}"))).await;
                         break 'write_loop;
                     }
 
                     Ok(v) => v,
                 };
-                tracing::info!("--------- send --------- {}", pkt.idempotent());
+
                 if let Err(err) = writer.write_all(pkt.raw()).await {
-                    tracing::error!("{err}");
-                    shutdown_tx.send(1).expect("shutdown_tx.send failed");
+                    event.on_error(&cli, g::Err::IOWriteFailed(format!("{err}"))).await;
                     break 'write_loop;
                 }
             }
         }
     }
+
+    cli.shutdown();
 }

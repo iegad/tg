@@ -83,13 +83,9 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         LinearObjectPool::new(Self::new, |v|v.reset())
     }
 
-    /// # Conn<U>.setup
+    /// # Conn<U>.load
     /// 
-    /// 激活会话端
-    /// 
-    /// # Returns
-    /// 
-    /// (`wbuf_tx`: io发送管道 sender, `wbuf_rx`: io发送管道 receiver, `shutdown_rx`: 会话关闭管道 receiver)
+    /// 加载 tcp stream 到会话, 调用后会返回会话关闭管道 rx.
     /// 
     /// # Notes
     /// 
@@ -153,11 +149,13 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         self.shutdown_tx.send(1).unwrap();
     }
 
+    /// 获取幂等
     #[inline(always)]
     pub fn idempotent(&self) -> u32 {
         self.idempotent
     }
 
+    /// 设置幂等
     #[inline(always)]
     pub fn set_idempotent(&self, idempotent: u32) {
         unsafe {
@@ -166,6 +164,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         }
     }
 
+    /// 获取 packet builder
     #[allow(clippy::mut_from_ref)]
     #[allow(clippy::cast_ref_to_mut)]
     #[inline(always)]
@@ -215,18 +214,21 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         self.user_data.as_ref()
     }
 
+    /// 获取mutable 读缓冲区
     #[allow(clippy::mut_from_ref)]
     #[allow(clippy::cast_ref_to_mut)]
     #[inline(always)]
-    pub fn rbuf_mut(&self) -> &mut [u8] {
+    pub(crate) fn rbuf_mut(&self) -> &mut [u8] {
         unsafe { &mut *(&self.rbuf as *const [u8] as *mut [u8]) }
     }
 
+    /// 获取immutable 读缓冲区
     #[inline(always)]
-    pub fn rbuf(&self, n: usize) -> & [u8] {
+    pub(crate) fn rbuf(&self, n: usize) -> &[u8] {
         &self.rbuf[..n]
     }
 
+    /// 获取消息管道 rx
     #[allow(clippy::mut_from_ref)]
     #[allow(clippy::cast_ref_to_mut)]
     #[inline(always)]
@@ -252,71 +254,5 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
 impl<'a, U: Default + Sync + Send> Drop for Conn<'a, U> {
     fn drop(&mut self) {
         tracing::warn!("{:?} has released", self.sockfd());
-    }
-}
-
-pub struct Group {
-    host: String,
-    count: usize,
-    tx: async_channel::Sender<server::Packet>,
-    rx: async_channel::Receiver<server::Packet>,
-    shutdown: tokio::sync::broadcast::Sender<u8>,
-}
-
-impl Group {
-    pub fn new(host: &str, count: usize) -> Self {
-        let (tx, rx) = async_channel::bounded(g::DEFAULT_CHAN_SIZE);
-        let (shutdown, _) = tokio::sync::broadcast::channel(1);
-
-        Self {
-            host: host.to_string(),
-            count,
-            tx,
-            rx,
-            shutdown,
-        }
-    }
-
-    pub fn new_arc(host: &str, count: usize) -> Arc<Self> {
-        Arc::new(Self::new(host, count))
-    }
-
-    pub fn host(&self) -> &str {
-        &self.host
-    }
-
-    pub fn count(&self) -> usize {
-        self.count
-    }
-
-    pub async fn send(&self, pkt: server::Packet) -> g::Result<()> {
-        if let Err(err) = self.tx.send(pkt).await {
-            return Err(g::Err::PackSendFailed(format!("{err}")));
-        }
-
-        Ok(())
-    }
-
-    pub fn sender(&self) -> async_channel::Sender<server::Packet> {
-        self.tx.clone()
-    }
-
-    pub fn shutdown(&self) {
-        if let Err(err) = self.shutdown.send(1) {
-            tracing::error!("{err}");
-            assert!(false);
-        }
-    }
-
-    pub fn receiver(&self) -> async_channel::Receiver<server::Packet> {
-        self.rx.clone()
-    }
-
-    pub fn shutdown_rx(&self) -> tokio::sync::broadcast::Receiver<u8> {
-        self.shutdown.subscribe()
-    }
-
-    pub fn shutdown_tx(&self) -> tokio::sync::broadcast::Sender<u8> {
-        self.shutdown.clone()
     }
 }

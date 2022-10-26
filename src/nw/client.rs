@@ -51,7 +51,6 @@ pub struct Client<'a, U: Default + Send + Sync + 'static> {
     send_seq: u32,
     recv_seq: u32,
     reader: Option<&'a OwnedReadHalf>,
-    // rbuf: [u8; g::DEFAULT_BUF_SIZE],
     user_data: Option<U>,
     builder: packet::Builder,
     // contorller
@@ -63,13 +62,15 @@ pub struct Client<'a, U: Default + Send + Sync + 'static> {
 impl<'a, U: Default + Send + Sync + 'static> Client<'a, U> {
     pub fn new(shutdown_tx: broadcast::Sender<u8>) -> Self {
         let (tx, rx) = async_channel::bounded(g::DEFAULT_CHAN_SIZE);
+        Self::with(tx, rx, shutdown_tx)
+    }
 
+    pub fn with(tx: async_channel::Sender<server::Packet>, rx: async_channel::Receiver<server::Packet>, shutdown_tx: broadcast::Sender<u8>) -> Self {
         Self { 
             idempotent: 0, 
             send_seq: 0, 
             recv_seq: 0, 
             reader: None, 
-            // rbuf: [0; g::DEFAULT_BUF_SIZE], 
             user_data: None, 
             builder: packet::Builder::new(), 
             shutdown_tx, 
@@ -83,14 +84,14 @@ impl<'a, U: Default + Send + Sync + 'static> Client<'a, U> {
     }
 
     pub(crate) fn load(&self, reader: &'a OwnedReadHalf) -> (
-        tokio::sync::broadcast::Sender<u8>, 
+        tokio::sync::broadcast::Receiver<u8>, 
         async_channel::Receiver<server::Packet>
     ) {
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
             this.reader = Some(reader);
         }
-        (self.shutdown_tx.clone(), self.rx.clone())
+        (self.shutdown_tx.subscribe(), self.rx.clone())
     }
 
     pub fn reset(&mut self) {
@@ -106,12 +107,24 @@ impl<'a, U: Default + Send + Sync + 'static> Client<'a, U> {
         self.idempotent
     }
 
+    pub(crate) fn set_idempotent(&self, idempotent: u32) {
+        unsafe { *(&self.idempotent as *const u32 as *mut u32) = idempotent; }
+    }
+
     pub fn send_seq(&self) -> u32 {
         self.send_seq
     }
 
+    pub fn send_seq_incr(&self) {
+        unsafe { *(&self.send_seq as *const u32 as *mut u32) += 1; }
+    }
+
     pub fn recv_seq(&self) -> u32 {
         self.recv_seq
+    }
+
+    pub fn recv_seq_incr(&self) {
+        unsafe { *(&self.recv_seq as *const u32 as *mut u32) += 1; }
     }
 
     pub fn sockfd(&self) -> Option<Socket> {
