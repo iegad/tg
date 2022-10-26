@@ -1,7 +1,7 @@
 use super::{server::{Server, self}, client, conn};
 use futures::StreamExt;
 use crate::g;
-use std::sync::{atomic::Ordering, Arc};
+use std::{sync::{atomic::Ordering, Arc}, net::SocketAddr};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpSocket, TcpStream, tcp::OwnedWriteHalf},
@@ -10,8 +10,7 @@ use tokio::{
 };
 
 // ---------------------------------------------- server_run ----------------------------------------------
-//
-//
+
 /// # server_run<T>
 ///
 /// run a tcp server.
@@ -26,28 +25,49 @@ where
     T: super::server::IEvent,
     T::U: Default + Sync + Send,
 {
-    // step 1: 初始化监听套接字
-    let lfd = match TcpSocket::new_v4() {
-        Err(err) => return Err(g::Err::SocketErr(format!("{err}"))),
-        Ok(v) => v,
-    };
+    let laddr: SocketAddr = server.host().parse().expect("host is invalid");
+    let sockfd;
 
+    // step 1: 初始化监听套接字
+    if laddr.is_ipv4() {
+        sockfd = match TcpSocket::new_v4() {
+            Err(err) => return Err(g::Err::SocketErr(format!("{err}"))),
+            Ok(v) => v,
+        };
+    } else {
+        sockfd = match TcpSocket::new_v6() {
+            Err(err) => return Err(g::Err::SocketErr(format!("{err}"))),
+            Ok(v) => v,
+        };
+    }
+
+    // --------------------------
+    // SO_REUSEPORT和SO_REUSEADDR
+    //
+    // * SO_REUSEPORT是允许多个socket绑定到同一个ip+port上. SO_REUSEADDR用于对TCP套接字处于TIME_WAIT状态下的socket, 才可以重复绑定使用.
+    //
+    // * 两者使用场景完全不同.
+    //
+    //    SO_REUSEADDR 这个套接字选项通知内核, 如果端口忙, 但TCP状态位于TIME_WAIT, 可以重用端口. 
+    //        这个一般用于当你的程序停止后想立即重启的时候, 如果没有设定这个选项, 会报错EADDRINUSE, 需要等到TIME_WAIT结束才能重新绑定到同一个 ip + port 上. 
+    //
+    //    SO_REUSEPORT 用于多核环境下, 允许多个线程或者进程绑定和监听同一个 ip + port, 无论UDP, TCP(以及TCP是什么状态).
     #[cfg(unix)]
     {
-        if let Err(err) = lfd.set_reuseport(true) {
+        if let Err(err) = SocketErr.set_reuseport(true) {
             return Err(g::Err::SocketErr(format!("{err}")));
         }
     }
 
-    if let Err(err) = lfd.set_reuseaddr(true) {
+    if let Err(err) = sockfd.set_reuseaddr(true) {
         return Err(g::Err::SocketErr(format!("{err}")));
     }
 
-    if let Err(err) = lfd.bind(server.host().parse().unwrap()) {
+    if let Err(err) = sockfd.bind(laddr) {
         return Err(g::Err::SocketErr(format!("{err}")));
     }
 
-    let listener = match lfd.listen(1024) {
+    let listener = match sockfd.listen(1024) {
         Err(err) => return Err(g::Err::SocketErr(format!("{err}"))),
         Ok(v) => v,
     };
@@ -65,6 +85,7 @@ where
 
     // step 5: accept_loop.
     let timeout = server.timeout;
+    let mut res: g::Result<()> = Ok(());
 
     'accept_loop: loop {
         let event = server.event.clone();
@@ -79,8 +100,12 @@ where
 
             // when connection comming.
             result_accept = listener.accept() => {
-                let stream =  match result_accept {
-                    Err(err) => return Err(g::Err::ServerAcceptError(format!("{err}"))),
+                let stream = match result_accept {
+                    Err(err) => {
+                        res = Err(g::Err::ServerAcceptError(format!("{err}")));
+                        server.shutdown();
+                        break 'accept_loop;
+                    }
                     Ok((v, _)) => v
                 };
 
@@ -99,12 +124,11 @@ where
     // step 7: trigger server stopped event.
     server.event.on_stopped(&server).await;
 
-    Ok(())
+    res
 }
 
 // ---------------------------------------------- conn handle ----------------------------------------------
-//
-//
+
 /// # conn_handle<T>
 ///
 /// tcp connection's handler.
@@ -113,11 +137,11 @@ where
 ///
 /// `stream` [TcpStream]
 ///
-/// `conn_resuable` [LinearReusable<'static, Conn<T::U>>]
+/// `conn` [LinearReusable<'static, Conn<T::U>>]
 ///
 /// `timeout` read timeout
 ///
-/// `shutdown_rx` server shutdown signal receiver.
+/// `s_down_rx` server shutdown signal receiver.
 ///
 /// `event` IEvent implement.
 ///
@@ -131,18 +155,18 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     // step 1: get socket reader and writer
     let (mut reader, writer) = stream.into_split();
     let mut c_down_rx = conn.load(&reader);
-    let srxc = c_down_rx.resubscribe();
-    
-    let eventc = event.clone();
-    let connc = conn.clone();
+    let c_down_rx_ = c_down_rx.resubscribe();
+    let event_ = event.clone();
+    let conn_ = conn.clone();
 
-    let writer_future = tokio::spawn(async move {
-        conn_write_handle(connc, eventc, writer, srxc).await;
+    let w_fut = tokio::spawn(async move {
+        conn_write_handle(conn_, event_, writer, c_down_rx_).await;
     });
 
     // step 3: timeout ticker.
-    let interval = if timeout == 0 { 60 * 60} else { timeout };
-    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval));
+    let mut ticker = tokio::time::interval(
+        std::time::Duration::from_secs(if timeout == 0 { 60 * 60 } else { timeout })
+    );
 
     if event.on_connected(&conn).await.is_err() {
         return;
@@ -210,7 +234,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     }
 
     conn.shutdown();
-    writer_future.await.unwrap();
+    w_fut.await.unwrap();
     event.on_disconnected(&conn).await;
     conn.reset();
 }

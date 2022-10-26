@@ -519,6 +519,5 @@ mod test_packet {
                 break;
             }
         }
-            
     }
 }

@@ -211,9 +211,10 @@ impl<T: IEvent> Server<T> {
     /// 关闭服务监听
     #[inline]
     pub fn shutdown(&self) {
-        debug_assert!(self.running());
-        if let Err(err) = self.shutdown_tx.send(1) {
-            tracing::error!("server.shutdown failed: {err}");
+        if self.running() {
+            if let Err(err) = self.shutdown_tx.send(1) {
+                tracing::error!("server.shutdown failed: {err}");
+            }
         }
     }
 
