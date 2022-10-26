@@ -6,6 +6,8 @@
 
 2022-10-11 尽量确保框架代码的有效性, 并使用宏来提高友好度.
 
+2022-10-26 消息包的parse 调用过于复杂.
+
 性能优化 https://nnethercote.github.io/perf-book/inlining.html
 
 宏使用 https://blog.logrocket.com/macros-in-rust-a-tutorial-with-examples/
@@ -35,3 +37,5 @@ Packets: 10000
 3. Total: 15877858 micro seconds.    QPS: 500,000 / (15.877858 * 2) = 15,745.1969 / s
 4. Total: 8654372  micro seconds.    QPS: 500,000 / (8.654372 * 2) = 28,887.1336 / s
 4. Total: 9369455  micro seconds.    QPS: 500,000 / (9.369455 * 2) = 26,682.4484 / s
+
+

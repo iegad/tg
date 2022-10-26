@@ -68,7 +68,7 @@ where
 
     'accept_loop: loop {
         let event = server.event.clone();
-        let shutdown_receiver = shutdown_rx.resubscribe();
+        let shutdown_rx_ = shutdown_rx.resubscribe();
         let conn = Arc::new(conn_pool.pull());
 
         select! {
@@ -86,7 +86,7 @@ where
 
                 let permit = server.limit_connections.clone().acquire_owned().await.unwrap();
                 tokio::spawn(async move {
-                    conn_handle(stream, conn, timeout, shutdown_receiver, event).await;
+                    conn_handle(stream, conn, timeout, shutdown_rx_, event).await;
                     drop(permit);
                 });
             }
@@ -125,13 +125,13 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     stream: TcpStream,
     conn: conn::Ptr<'_, T::U>,
     timeout: u64,
-    mut shutdown_rx: broadcast::Receiver<u8>,
+    mut s_down_rx: broadcast::Receiver<u8>,
     event: T
 ) {
     // step 1: get socket reader and writer
     let (mut reader, writer) = stream.into_split();
-    let mut srx = conn.load(&reader);
-    let srxc = srx.resubscribe();
+    let mut c_down_rx = conn.load(&reader);
+    let srxc = c_down_rx.resubscribe();
     
     let eventc = event.clone();
     let connc = conn.clone();
@@ -155,16 +155,15 @@ async fn conn_handle<'a, T: super::server::IEvent>(
             _ = ticker.tick() => {
                 if timeout > 0 {
                     event.on_error(&conn, g::Err::IOReadTimeout).await;
-                    conn.shutdown();
                     break 'read_loop;
                 }
             }
 
-            _ = shutdown_rx.recv() => {
+            _ = s_down_rx.recv() => {
                 conn.shutdown();
             }
 
-            _ = srx.recv() => {
+            _ = c_down_rx.recv() => {
                 break 'read_loop;
             }
 
@@ -172,12 +171,10 @@ async fn conn_handle<'a, T: super::server::IEvent>(
                 let n = match result_read {
                     Err(err) => {
                         event.on_error(&conn, g::Err::IOReadFailed(format!("{err}"))).await;
-                        conn.shutdown();
                         break 'read_loop;
                     }
 
                     Ok(0) => {
-                        conn.shutdown();
                         break 'read_loop;
                     }
 
@@ -212,6 +209,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
         }
     }
 
+    conn.shutdown();
     writer_future.await.unwrap();
     event.on_disconnected(&conn).await;
     conn.reset();
