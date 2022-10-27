@@ -11,8 +11,6 @@ use tokio::{
 
 // ---------------------------------------------- server_run ----------------------------------------------
 
-/// # server_run<T>
-///
 /// run a tcp server.
 ///
 /// # Parameters
@@ -26,20 +24,19 @@ where
     T::U: Default + Sync + Send,
 {
     let laddr: SocketAddr = server.host().parse().expect("host is invalid");
-    let sockfd;
 
     // step 1: 初始化监听套接字
-    if laddr.is_ipv4() {
-        sockfd = match TcpSocket::new_v4() {
+    let sockfd = if laddr.is_ipv4() {
+        match TcpSocket::new_v4() {
             Err(err) => return Err(g::Err::SocketErr(format!("{err}"))),
             Ok(v) => v,
-        };
+        }
     } else {
-        sockfd = match TcpSocket::new_v6() {
+        match TcpSocket::new_v6() {
             Err(err) => return Err(g::Err::SocketErr(format!("{err}"))),
             Ok(v) => v,
-        };
-    }
+        }
+    };
 
     // --------------------------
     // SO_REUSEPORT和SO_REUSEADDR
@@ -176,6 +173,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
         ticker.reset();
 
         select! {
+            // 超时信号
             _ = ticker.tick() => {
                 if timeout > 0 {
                     event.on_error(&conn, g::Err::IOReadTimeout).await;
@@ -183,14 +181,17 @@ async fn conn_handle<'a, T: super::server::IEvent>(
                 }
             }
 
+            // 服务端关闭信号
             _ = s_down_rx.recv() => {
-                conn.shutdown();
+                break 'read_loop;
             }
 
+            // 会话端关闭信号
             _ = c_down_rx.recv() => {
                 break 'read_loop;
             }
 
+            // 会话端读消息信号
             result_read = reader.read(conn.rbuf_mut()) => {
                 let n = match result_read {
                     Err(err) => {
@@ -206,7 +207,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
                 };
 
                 'pack_loop: loop {
-                    let option_pkt = match conn.builder().parse(conn.rbuf(n)) {
+                    let option_inpk = match conn.builder().parse(conn.rbuf(n)) {
                         Err(err) => {
                             event.on_error(&conn, err).await;
                             break 'read_loop;
@@ -214,15 +215,18 @@ async fn conn_handle<'a, T: super::server::IEvent>(
                         Ok(v) => v,
                     };
 
-                    let (pkt, next) = match option_pkt {
+                    let (inpk, next) = match option_inpk {
                         None => break 'pack_loop,
                         Some(v) => v,
                     };
 
-                    conn.recv_seq_incr();
-                    conn.set_idempotent(pkt.idempotent());
-                    if event.on_process(&conn, pkt).await.is_err() {
-                        break 'read_loop;
+                    let idempotent = inpk.idempotent();
+                    if idempotent > conn.idempotent() {
+                        conn.recv_seq_incr();
+                        if event.on_process(&conn, inpk).await.is_err() {
+                            break 'read_loop;
+                        }
+                        conn.set_idempotent(idempotent);
                     }
 
                     if !next {
@@ -236,9 +240,13 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     conn.shutdown();
     w_fut.await.unwrap();
     event.on_disconnected(&conn).await;
-    conn.reset();
 }
 
+// ---------------------------------------------- conn write handle ----------------------------------------------
+
+/// 会话端写协程
+/// 
+/// 使用两个协程的目的是为了读写分离, 提高吞吐量.
 async fn conn_write_handle<'a, T: super::server::IEvent>(
     conn: conn::Ptr<'_, T::U>,
     event: T,
@@ -254,7 +262,6 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
                 if let Some(out) = option_out {
                     if let Err(err) = writer.write_all(out.raw()).await {
                         event.on_error(&conn, g::Err::IOWriteFailed(format!("{err}"))).await;
-                        conn.shutdown();
                         break 'write_loop;
                     }
                     conn.send_seq_incr();
@@ -264,9 +271,14 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
     }
 }
 
+// ---------------------------------------------- conn write handle ----------------------------------------------
+
+/// 运行TCP 客户端
 pub async fn client_run<T: client::IEvent>(host: &str, cli: client::Ptr<'static, T::U>) {
+    // step 1: 初始化事件实例
     let event = T::default();
 
+    // step 2: 连接服务端
     let stream = match TcpStream::connect(host).await {
         Err(err) => {
             event.on_error(&cli, g::Err::TcpConnectFailed(format!("{err}"))).await;
@@ -274,34 +286,37 @@ pub async fn client_run<T: client::IEvent>(host: &str, cli: client::Ptr<'static,
         },
         Ok(v) => v,
     };
-
     let (mut reader, writer) = stream.into_split();
-    let (shutdown_rx_, rx) = cli.load(&reader);
 
-    // for read
-    
-    let mut shutdown_rx = shutdown_rx_.resubscribe();
+    // step 3: 准备读协程数据
+    let (mut shutdown_rx, rx) = cli.load(&reader);
     let builder = cli.builder();
     let mut rbuf = [0u8; g::DEFAULT_BUF_SIZE];
 
-    // for write
+    // step 4: 准备写协程数据
+    let shutdown_rx_ = shutdown_rx.resubscribe();
     let event_ = event.clone();
     let cli_ = cli.clone();
 
+    // step 5: 开启写协程
     let w_fut = tokio::spawn(async move {
         cli_write_handle(cli_, event_, writer, shutdown_rx_, rx).await;
     });
 
+    // step 6: 连接事件触发
     if event.on_connected(&cli).await.is_err() {
         return;
     }
 
+    // step 7: 开启读循环, 客户端是不设定读超时的.
     'read_loop: loop {
         select! {
+            // 关闭信号
             _ = shutdown_rx.recv() => {
                 break 'read_loop;
             }
 
+            // 读消息信号
             result_read = reader.read(&mut rbuf) => {
                 let n = match result_read {
                     Err(err) => {
@@ -332,9 +347,9 @@ pub async fn client_run<T: client::IEvent>(host: &str, cli: client::Ptr<'static,
                         if event.on_process(&cli, pkt).await.is_err() {
                             break 'read_loop;
                         }
+                        cli.set_idempotent(idempotent);
                     }
 
-                    cli.set_idempotent(idempotent);
                     if !next {
                         break 'pack_loop;
                     }
@@ -343,10 +358,14 @@ pub async fn client_run<T: client::IEvent>(host: &str, cli: client::Ptr<'static,
         }
     }
 
+    cli.shutdown();
     w_fut.await.unwrap();
     event.on_disconnected(&cli).await;
 }
 
+// ---------------------------------------------- conn write handle ----------------------------------------------
+
+/// 客户端写协程
 async fn cli_write_handle<T: client::IEvent>(
     cli: client::Ptr<'static, T::U>,
     event: T,
@@ -366,7 +385,6 @@ async fn cli_write_handle<T: client::IEvent>(
                         event.on_error(&cli, g::Err::AsyncRecvError(format!("{err}"))).await;
                         break 'write_loop;
                     }
-
                     Ok(v) => v,
                 };
 
@@ -374,9 +392,8 @@ async fn cli_write_handle<T: client::IEvent>(
                     event.on_error(&cli, g::Err::IOWriteFailed(format!("{err}"))).await;
                     break 'write_loop;
                 }
+                cli.send_seq_incr();
             }
         }
     }
-
-    cli.shutdown();
 }

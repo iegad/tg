@@ -1,3 +1,7 @@
+//! nw 网络库, network 的缩写.
+//! 
+//! 目前只支持TCP协议, 后期目标支持 Websocket 和 KCP 协议.
+
 pub mod conn;
 pub mod server;
 pub mod tcp;

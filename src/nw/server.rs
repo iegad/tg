@@ -1,3 +1,5 @@
+//! 服务端对象
+
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use async_trait::async_trait;
 use tokio::sync::{Semaphore, broadcast};
@@ -6,11 +8,8 @@ use super::{conn::Ptr, packet};
 
 pub type Packet = packet::LinearItem;
 
-// ---------------------------------------------- IServerEvent ----------------------------------------------
-//
-//
-/// # IServerEvent
-///
+// ---------------------------------------------- IEvent ----------------------------------------------
+
 /// 服务端网络事件
 ///
 /// # Example
@@ -34,7 +33,7 @@ pub type Packet = packet::LinearItem;
 /// ```
 #[async_trait]
 pub trait IEvent: Default + Send + Sync + Clone + 'static {
-    type U: Sync + Send + Default;
+    type U: Sync + Send + Default + 'static;
 
     /// 会话端错误事件
     ///
@@ -91,16 +90,15 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
 }
 
 // ---------------------------------------------- Server<T> ----------------------------------------------
-//
-//
+
 /// # Server<T>
 ///
 /// 服务端属性
 ///
-/// # 泛型: T
+/// 泛型T IEvent 实现
 ///
 /// IServerEvent 接口实现.
-pub struct Server<T> {
+pub struct Server<T: IEvent> {
     // block
     pub(crate) host: &'static str,                 // 监听地址
     pub(crate) max_connections: usize,             // 最大连接数
@@ -114,12 +112,10 @@ pub struct Server<T> {
 
 
 impl<T: IEvent> Server<T> {
-    /// # Server<T>::new
-    ///
     /// Server<T> 工厂函数
     ///
-    /// # 入参
-    ///
+    /// # Parameters
+    /// 
     /// `host` 监听地址.
     ///
     /// `max_connections` 最大连接数.
@@ -139,13 +135,7 @@ impl<T: IEvent> Server<T> {
         }
     }
 
-    /// # Server<T>::new_ptr
-    ///
     /// 创建 Arc<Server<T>> 实例
-    ///
-    /// # 入参
-    /// 
-    /// 参考 [Server<T>::new]
     ///
     /// # Example
     ///
@@ -175,13 +165,13 @@ impl<T: IEvent> Server<T> {
     }
 
     /// 监听地址
-    #[inline]
+    #[inline(always)]
     pub fn host(&self) -> &'static str {
         self.host
     }
 
     /// 最大连接数
-    #[inline]
+    #[inline(always)]
     pub fn max_connections(&self) -> usize {
         self.max_connections
     }
@@ -191,29 +181,29 @@ impl<T: IEvent> Server<T> {
     /// # Notes
     /// 
     /// 当前连接数并不准确, 仅作参考
-    #[inline]
+    #[inline(always)]
     pub fn current_connections(&self) -> usize {
         self.max_connections - self.limit_connections.available_permits()
     }
 
     /// 读超时
-    #[inline]
+    #[inline(always)]
     pub fn timeout(&self) -> u64 {
         self.timeout
     }
 
     /// 判断服务端是否处于监听(运行)状态.
-    #[inline]
+    #[inline(always)]
     pub fn running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
 
     /// 关闭服务监听
-    #[inline]
+    #[inline(always)]
     pub fn shutdown(&self) {
-        if self.running() {
+        if self.running() && self.shutdown_tx.receiver_count() > 0 {
             if let Err(err) = self.shutdown_tx.send(1) {
-                tracing::error!("server.shutdown failed: {err}");
+                panic!("----- server.shutdown failed: {err} -----");
             }
         }
     }
@@ -223,6 +213,5 @@ impl<T: IEvent> Server<T> {
         while self.max_connections > self.limit_connections.available_permits() || self.running() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        tracing::debug!("server has stopped!!!");
     }
 }

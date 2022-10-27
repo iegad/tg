@@ -1,3 +1,5 @@
+//! 网络消息包
+
 use crate::g;
 use lockfree_object_pool::{LinearObjectPool, LinearReusable};
 use std::fmt::Display;
@@ -7,21 +9,20 @@ use std::fmt::Display;
 /// Packet 对象池元素类型
 pub type LinearItem = LinearReusable<'static, Packet>;
 
-
 // ----------------------------------------------- 静态对象 -----------------------------------------------
 
 lazy_static::lazy_static! {
     /// packet 内部使用对象池.
-    static ref INNER_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::default, |v|{v.reset();});
+    static ref INNER_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::default, |v|v.reset());
 
     /// 构建请求包时使用
-    pub static ref REQ_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::default, |v|{v.reset();});
+    pub static ref REQ_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::default, |v|v.reset());
 
     /// 构建应答包时使用
-    pub static ref RSP_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::default, |v|{v.reset();});
+    pub static ref RSP_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::default, |v|v.reset());
 
     /// 通用Packet对象池
-    pub static ref RKT_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::default, |v|{v.reset();});
+    pub static ref RKT_POOL: LinearObjectPool<Packet> = LinearObjectPool::new(Packet::default, |v|v.reset());
 }
 
 // ----------------------------------------------- Packet -----------------------------------------------
@@ -119,19 +120,19 @@ impl Packet {
         Self(raw)
     }
 
-    /// Getter: id
+    /// 获取包ID
     #[inline(always)]
     pub fn id(&self) -> u16 {
         unsafe { *(self.0.as_ptr().add(2) as *const u16) }
     }
 
-    /// Getter: idempotent
+    /// 获取幂等
     #[inline(always)]
     pub fn idempotent(&self) -> u32 {
         unsafe { *(self.0.as_ptr().add(4) as *const u32) }
     }
 
-    /// Getter: raw_len
+    /// 获取消息包长度, 原始码流长度, 包含消息头部分.
     #[inline(always)]
     pub fn raw_len(&self) -> usize {
         unsafe { *(self.0.as_ptr().add(8) as *const u32) as usize }
@@ -179,19 +180,23 @@ impl Packet {
         }
     }
     
-    /// Setter: id
+    /// 设置包ID
+    /// 
+    /// 调用该方法后, 消息包会变得无效化, 需要手动调用 setup方法使用有效.
     #[inline(always)]
     pub fn set_id(&mut self, id: u16) {
         unsafe { *(self.0.as_mut_ptr().add(2) as *mut u16) = id }
     }
 
-    /// Setter: idempotent
+    /// 设置幂等
+    /// 
+    /// 调用该方法后, 消息包会变得无效化, 需要手动调用 setup方法使用有效.
     #[inline(always)]
     pub fn set_idempotent(&mut self, idempotent: u32) {
         unsafe { *(self.0.as_mut_ptr().add(4) as *mut u32) = idempotent }
     }
 
-    /// Setter: data
+    /// 设置消息体
     /// 
     /// 设置消息体的时候同时会设置消息包的raw_len字段
     /// 
@@ -223,9 +228,9 @@ impl Packet {
 
     /// 使消息包变得有效.
     /// 
-    /// 当调用过 [set_id], [set_idempotent] , [set_data] 这样的方法后, 消息包需要重新计算校验和字段
+    /// 当调用过 [`set_id`], [`set_idempotent`] , [`set_data`] 这样的方法后, 消息包需要重新计算校验和字段
     /// 
-    /// 而该方法的作用就是重新计算校验和, 这样消息包才能变得有效. 否则无法通过 [valid] 方法判断.
+    /// 而该方法的作用就是重新计算校验和, 这样消息包才能变得有效. 否则无法通过 [`valid`] 方法判断.
     #[inline(always)]
     pub fn setup(&mut self) {
         assert!(self.id() > 0 && self.idempotent() > 0 && self.raw_len() == self.raw().len());
@@ -263,7 +268,9 @@ impl Packet {
     }
 
     /// 重置消息包, 使用变得无效
+    #[inline(always)]
     pub(crate) fn reset(&mut self) {
+        // 这里可以使用内联, 原因是, 在对象池中, 是调用该方法, 而不是把该方法作为地址传递, 所以使用内联并不会有任何问题.
         unsafe { self.0.set_len(0); }
     }
 
@@ -282,13 +289,16 @@ impl Packet {
     }
 }
 
-impl From<Vec<u8>> for Packet {
-    fn from(raw: Vec<u8>) -> Self {
-        Self(raw)
-    }
-}
-
 impl From<&[u8]> for Packet {
+    /// 通过 &[u8] 构建 Packet对象
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// let raw = "Hello world".as_bytes();
+    /// let p = tg::nw::packet::Packet::from(raw);
+    /// assert!(!p.valid());
+    /// ```
     fn from(raw: &[u8]) -> Self {
         Self(raw.to_vec())
     }
@@ -408,12 +418,12 @@ impl Builder {
 
         // 解析消息体
         if buflen > 0 && clen >= Packet::HEAD_SIZE {
-            let rl = cur.raw_len();
-            if cur.0.capacity() < rl {
-                cur.0.reserve(rl);
+            let rlen = cur.raw_len();
+            if cur.0.capacity() < rlen {
+                cur.0.reserve(rlen);
             }
 
-            let mut nleft = rl - clen;
+            let mut nleft = rlen - clen;
             if nleft > buflen {
                 nleft = buflen;
             }
@@ -428,11 +438,7 @@ impl Builder {
             }
         }
 
-        if buflen == 0 {
-            self.pos = 0;
-        } else {
-            self.pos = bufpos;
-        }
+        self.pos = if buflen == 0 { 0 } else { bufpos };
 
         // 检查消息体
         if clen == cur.raw_len() {
@@ -449,14 +455,36 @@ impl Builder {
 }
 
 impl Default for Builder {
+    /// default 为非内联函数, 这样可以将该函数作为参数传递.
+    /// 
+    /// # Example
+    /// 
+    /// ```
+    /// let _pool = lockfree_object_pool::LinearObjectPool::<tg::nw::packet::Packet>::new(tg::nw::packet::Packet::default, |_v|{});
+    /// ```
     fn default() -> Self {
         Self::new()
     }
 }
 
+// ----------------------------------------------- UT -----------------------------------------------
+
 #[cfg(test)]
 mod test_packet {
+    use lockfree_object_pool::LinearReusable;
     use super::{Packet, Builder};
+
+    #[test]
+    fn packet_info() {
+        println!("> ------------------------------ > Packet Size: {}", std::mem::size_of::<Packet>());
+        println!(">>>>> Vec<u8> Size: {}", std::mem::size_of::<Vec<u8>>());
+    }
+
+    #[test]
+    fn builder_info() {
+        println!("> ------------------------------ > Builder Size: {}", std::mem::size_of::<Builder>());
+        println!(">>>>> Option<LinearReusable<Packet>> Size: {}", std::mem::size_of::<Option<LinearReusable<Packet>>>());
+    }
 
     #[test]
     fn packet_basic() {

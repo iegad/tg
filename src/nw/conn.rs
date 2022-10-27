@@ -1,3 +1,15 @@
+//! 网络会话对象. 
+//! 
+//! 该对象作为 服务端侧接收到的客户端连接抽象. 由块(block)属性 和 控制(control)属性组成.
+//! 
+//! Block 属性用来描述对象的状态属性.
+//! 
+//! Control 属性用来描述对象的行为属性.
+//! 
+//! 在使用时应尽量通过对象池来获取实例. 通过对象池获取的实例.
+//! 
+//! 在运行时该对象由于占用字节过多, 所以尽量在堆上分配该实例, 但是对象池并不会将对象分配到堆上, 这个还是需要开发者手动控制.
+
 #[cfg(unix)]
 use std::os::unix::prelude::AsRawFd;
 #[cfg(windows)]
@@ -9,23 +21,20 @@ use tokio::{sync::broadcast, net::tcp::OwnedReadHalf};
 use crate::g;
 use super::{packet, server, Socket};
 
-// ---------------------------------------------- nw::Conn<U> ----------------------------------------------
-//
-//
-/// # ConnPtr<T>
-/// 
-/// 会话端指针
+// ----------------------------------------------- 类型重定义 -----------------------------------------------
+
+/// LinearItem<T> 对象池元素
 pub type LinearItem<'a, T> = LinearReusable<'static, Conn<'a, T>>;
+/// Conn 对象池
 pub type Pool<'a, T> = LinearObjectPool<Conn<'a, T>>;
+/// Conn 会话指针, 使用这种对象池数据是为了提高性能.
 pub type Ptr<'a, T> = Arc<LinearItem<'a, T>>;
 
-/// # Conn<U>
-///
+// ----------------------------------------------- Conn -----------------------------------------------
+
 /// 网络交互中的会话端
 ///
-/// # 泛型: U
-///
-/// 用户自定义类型
+/// 泛型U 为用户自定义类型
 pub struct Conn<'a, U: Default + Send + Sync + 'static> {
     // block
     idempotent: u32,
@@ -34,19 +43,17 @@ pub struct Conn<'a, U: Default + Send + Sync + 'static> {
     reader: Option<&'a OwnedReadHalf>,
     rbuf: [u8; g::DEFAULT_BUF_SIZE],
     user_data: Option<U>,
-    builder: packet::Builder,
     // contorller
-    shutdown_tx: broadcast::Sender<u8>,        // 会话关闭管道
-    tx: mpsc::Sender<server::Packet>,
-    rx: mpsc::Receiver<server::Packet>
+    builder: packet::Builder,
+    shutdown_tx: broadcast::Sender<u8>, // 控制会话的关闭
+    tx: mpsc::Sender<server::Packet>,   // 控制消息包的转发 -- 异步消息传递
+    rx: mpsc::Receiver<server::Packet>  // 控制消息包的接收 -- 异步消息接收
 }
 
 impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
-    /// # Conn<U>::new
-    ///
     /// 创建默认的会话端实例, 该函数由框架内部调用, 用于 对象池的初始化
     fn new() -> Self {
-        let (shutdown_sender, _) = broadcast::channel(1);
+        let (shutdown_tx, _) = broadcast::channel(1);
         let (tx, rx) = mpsc::channel(g::DEFAULT_CHAN_SIZE);
         Self {
             idempotent: 0,
@@ -54,7 +61,7 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
             recv_seq: 0,
             reader: None,
             rbuf: [0; g::DEFAULT_BUF_SIZE],
-            shutdown_tx: shutdown_sender,
+            shutdown_tx,
             user_data: None,
             builder: packet::Builder::new(),
             tx,
@@ -62,11 +69,11 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         }
     }
 
-    /// # Conn<U>::pool
+    /// 创建会话 对象池
     /// 
-    /// 创建 Conn<U> 对象池
+    /// 该函数的使用包含到了调用宏中, 所以在没有特殊条件下, 尽量不要显示调用.
     ///
-    /// @PS: RUST 不支持静态变量代有泛型参数
+    /// `PS: RUST 不支持静态变量代有泛型参数`
     ///
     ///    * static POOL<T>: LinearObjectPool<Conn<T>> = LinearObjectPool::new(...);
     ///
@@ -83,8 +90,6 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         LinearObjectPool::new(Self::new, |v|v.reset())
     }
 
-    /// # Conn<U>.load
-    /// 
     /// 加载 tcp stream 到会话, 调用后会返回会话关闭管道 rx.
     /// 
     /// # Notes
@@ -95,7 +100,6 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         &self,
         reader: &'a tokio::net::tcp::OwnedReadHalf
     ) -> broadcast::Receiver<u8> {
-        reader.as_ref().set_nodelay(true).unwrap();
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
             this.reader = Some(reader);
@@ -103,12 +107,10 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         self.shutdown_tx.subscribe()
     }
 
-    /// # Conn<U>.reset
-    ///
     /// 重置会话端, 使其处于未激活状态
-    #[inline]
     #[allow(clippy::cast_ref_to_mut)]
-    pub(crate) fn reset(&self) {
+    #[inline]
+    fn reset(&self) {
         unsafe {
             let this = &mut *(self as *const Self as *mut Self);
 
@@ -145,8 +147,11 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     /// 关闭会话端
     #[inline(always)]
     pub fn shutdown(&self) {
-        assert!(self.reader.is_some());
-        self.shutdown_tx.send(1).unwrap();
+        if self.reader.is_some() && self.shutdown_tx.receiver_count() > 0 {
+            if let Err(err) = self.shutdown_tx.send(1) {
+                panic!("------ self.shutdown_tx.send(1) failed: {err} ------");
+            }
+        }
     }
 
     /// 获取幂等
@@ -156,12 +161,10 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     }
 
     /// 设置幂等
+    #[allow(clippy::cast_ref_to_mut)]
     #[inline(always)]
     pub fn set_idempotent(&self, idempotent: u32) {
-        unsafe {
-            let p = &self.idempotent as *const u32 as *mut u32;
-            *p = idempotent;
-        }
+        unsafe { *(&self.idempotent as *const u32 as *mut u32) = idempotent; }
     }
 
     /// 获取 packet builder
@@ -179,12 +182,10 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
     }
 
     /// 接收序列递增
+    #[allow(clippy::cast_ref_to_mut)]
     #[inline(always)]
     pub(crate) fn recv_seq_incr(&self) {
-        unsafe {
-            let p = &self.recv_seq as *const u32 as *mut u32;
-            *p += 1;
-        }
+        unsafe { *(&self.recv_seq as *const u32 as *mut u32) += 1; }
     }
 
     /// 获取发送序列
@@ -193,13 +194,11 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
         self.send_seq
     }
 
-    // 发送序列递增
+    /// 发送序列递增
+    #[allow(clippy::cast_ref_to_mut)]
     #[inline(always)]
     pub(crate) fn send_seq_incr(&self) {
-        unsafe {
-            let p = &self.send_seq as *const u32 as *mut u32;
-            *p += 1;
-        }
+        unsafe { *(&self.send_seq as *const u32 as *mut u32) += 1; }
     }
 
     /// 设置用户自定义数据
@@ -254,5 +253,26 @@ impl<'a, U: Default + Send + Sync + 'static> Conn<'a, U> {
 impl<'a, U: Default + Sync + Send> Drop for Conn<'a, U> {
     fn drop(&mut self) {
         tracing::warn!("{:?} has released", self.sockfd());
+    }
+}
+
+// ----------------------------------------------- UT -----------------------------------------------
+
+#[cfg(test)]
+mod conn_test {
+    use futures::channel::mpsc;
+    use tokio::{net::tcp::OwnedReadHalf, sync::broadcast};
+    use crate::nw::{packet, server};
+    use super::Conn;
+
+    #[test]
+    fn conn_info() {
+        println!("> ------------------------------ > Conn: {}", std::mem::size_of::<Conn<()>>());
+        println!(">>>>> Option<&OwnedReadHalf> Size: {}", std::mem::size_of::<Option<&OwnedReadHalf>>());
+        println!(">>>>> packet::Builder Size: {}", std::mem::size_of::<packet::Builder>());
+        println!(">>>>> broadcast::Sender<u8> Size: {}", std::mem::size_of::<broadcast::Sender<u8>>());
+        println!(">>>>> mpsc::Sender<server::Packet> Size: {}", std::mem::size_of::<mpsc::Sender<server::Packet>>());
+        println!(">>>>> mpsc::Receiver<server::Packet> Size: {}", std::mem::size_of::<mpsc::Receiver<server::Packet>>());
+        println!(">>>>> Conn Size: {}", std::mem::size_of::<Conn<()>>());
     }
 }
