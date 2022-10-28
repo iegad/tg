@@ -20,10 +20,7 @@ impl tg::nw::client::IEvent for EchoEvent {
     }
 }
 
-#[tokio::main]
-async fn main() {
-    tg::utils::init_log();
-
+async fn work() {
     let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
     let cli = client::Client::<()>::new_arc(shutdown_tx);
     let controller = cli.clone();
@@ -44,4 +41,19 @@ async fn main() {
     
     j.await.unwrap();
     tracing::info!("done");
+}
+
+#[tokio::main]
+async fn main() {
+    tg::utils::init_log();
+
+    let mut arr = Vec::new();
+    for _ in 0..100 {
+        let j = tokio::spawn(async move {
+            work().await;
+        });
+        arr.push(j);
+    }
+
+    futures_util::future::join_all(arr).await;
 }
