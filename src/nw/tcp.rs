@@ -76,13 +76,13 @@ where
 
     // step 3: 获取关闭句柄
     let mut shutdown_rx = server.shutdown_tx.subscribe();
+    let timeout = server.timeout;
 
     // step 4: trigge server running event.
     server.event.on_running(&server).await;
 
     // step 5: accept_loop.
-    let timeout = server.timeout;
-    let mut res: g::Result<()> = Ok(());
+    let mut res = Ok(());
 
     'accept_loop: loop {
         let event = server.event.clone();
@@ -100,7 +100,6 @@ where
                 let stream = match result_accept {
                     Err(err) => {
                         res = Err(g::Err::ServerAcceptError(format!("{err}")));
-                        server.shutdown();
                         break 'accept_loop;
                     }
                     Ok((v, _)) => v
@@ -116,6 +115,7 @@ where
     }
 
     // step 6: set server state running(false).
+    server.shutdown();
     server.running.store(false, Ordering::SeqCst);
 
     // step 7: trigger server stopped event.
@@ -142,7 +142,7 @@ where
 ///
 /// `event` IEvent implement.
 ///
-async fn conn_handle<'a, T: super::server::IEvent>(
+async fn conn_handle<'a, T: server::IEvent>(
     stream: TcpStream,
     conn: conn::Ptr<'_, T::U>,
     timeout: u64,
@@ -155,6 +155,8 @@ async fn conn_handle<'a, T: super::server::IEvent>(
     let c_down_rx_ = c_down_rx.resubscribe();
     let event_ = event.clone();
     let conn_ = conn.clone();
+    let builder = conn.builder();
+    let rbuf = conn.rbuf_mut();
 
     let w_fut = tokio::spawn(async move {
         conn_write_handle(conn_, event_, writer, c_down_rx_).await;
@@ -192,7 +194,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
             }
 
             // 会话端读消息信号
-            result_read = reader.read(conn.rbuf_mut()) => {
+            result_read = reader.read(rbuf) => {
                 let n = match result_read {
                     Err(err) => {
                         event.on_error(&conn, g::Err::IOReadFailed(format!("{err}"))).await;
@@ -207,7 +209,7 @@ async fn conn_handle<'a, T: super::server::IEvent>(
                 };
 
                 'pack_loop: loop {
-                    let option_inpk = match conn.builder().parse(conn.rbuf(n)) {
+                    let option_inpk = match builder.parse(conn.rbuf(n)) {
                         Err(err) => {
                             event.on_error(&conn, err).await;
                             break 'read_loop;
@@ -251,14 +253,17 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
     conn: conn::Ptr<'_, T::U>,
     event: T,
     mut writer: tokio::net::tcp::OwnedWriteHalf, 
-    mut srx: tokio::sync::broadcast::Receiver<u8>) {
+    mut c_down_rx: tokio::sync::broadcast::Receiver<u8>) {
+    
+    let rx = conn.rx();
+
     'write_loop: loop {
         select! {
-            _ = srx.recv() => {
+            _ = c_down_rx.recv() => {
                 break 'write_loop;
             }
 
-            option_out = conn.rx().next() => {
+            option_out = rx.next() => {
                 if let Some(out) = option_out {
                     if let Err(err) = writer.write_all(out.raw()).await {
                         event.on_error(&conn, g::Err::IOWriteFailed(format!("{err}"))).await;
@@ -267,6 +272,16 @@ async fn conn_write_handle<'a, T: super::server::IEvent>(
                     conn.send_seq_incr();
                 }
             }
+        }
+    }
+
+    while !c_down_rx.is_empty() {
+        c_down_rx.recv().await.unwrap();
+    }
+
+    loop {
+        if let Err(_) = rx.try_next() {
+            break;
         }
     }
 }
@@ -291,7 +306,7 @@ pub async fn client_run<T: client::IEvent>(host: &str, cli: client::Ptr<'static,
     // step 3: 准备读协程数据
     let (mut shutdown_rx, rx) = cli.load(&reader);
     let builder = cli.builder();
-    let mut rbuf = [0u8; g::DEFAULT_BUF_SIZE];
+    let rbuf = cli.rbuf_mut();
 
     // step 4: 准备写协程数据
     let shutdown_rx_ = shutdown_rx.resubscribe();
@@ -317,7 +332,7 @@ pub async fn client_run<T: client::IEvent>(host: &str, cli: client::Ptr<'static,
             }
 
             // 读消息信号
-            result_read = reader.read(&mut rbuf) => {
+            result_read = reader.read(rbuf) => {
                 let n = match result_read {
                     Err(err) => {
                         event.on_error(&cli, g::Err::IOReadFailed(format!("{err}"))).await;
@@ -395,5 +410,13 @@ async fn cli_write_handle<T: client::IEvent>(
                 cli.send_seq_incr();
             }
         }
+    }
+    
+    while !shutdown_rx.is_empty() {
+        shutdown_rx.recv().await.unwrap();
+    }
+
+    while !rx.is_empty() {
+        rx.recv().await.unwrap();
     }
 }

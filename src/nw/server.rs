@@ -100,7 +100,7 @@ pub trait IEvent: Default + Send + Sync + Clone + 'static {
 /// IServerEvent 接口实现.
 pub struct Server<T: IEvent> {
     // block
-    pub(crate) host: &'static str,                 // 监听地址
+    pub(crate) host: String,                 // 监听地址
     pub(crate) max_connections: usize,             // 最大连接数
     pub(crate) timeout: u64,                       // 会话端读超时
     pub(crate) running: AtomicBool,                // 运行状态
@@ -121,11 +121,11 @@ impl<T: IEvent> Server<T> {
     /// `max_connections` 最大连接数.
     ///
     /// `timeout` 会话端读超时(单位秒).
-    fn new(host: &'static str, max_connections: usize, timeout: u64) -> Self {
+    fn new(host: &str, max_connections: usize, timeout: u64) -> Self {
         let (shutdown, _) = broadcast::channel(g::DEFAULT_CHAN_SIZE);
 
         Self {
-            host,
+            host: host.to_string(),
             max_connections,
             timeout,
             limit_connections: Arc::new(Semaphore::new(max_connections)),
@@ -166,8 +166,8 @@ impl<T: IEvent> Server<T> {
 
     /// 监听地址
     #[inline(always)]
-    pub fn host(&self) -> &'static str {
-        self.host
+    pub fn host(&self) -> &str {
+        &self.host
     }
 
     /// 最大连接数

@@ -85,6 +85,7 @@ pub struct Client<'a, U: Default + Send + Sync + 'static> {
     send_seq: u32,
     recv_seq: u32,
     reader: Option<&'a OwnedReadHalf>,
+    rbuf: [u8; g::DEFAULT_BUF_SIZE],
     user_data: Option<U>,
     // contorller
     builder: packet::Builder,
@@ -97,7 +98,8 @@ impl<'a, U: Default + Send + Sync + 'static> Client<'a, U> {
 
     /// 构造函数
     #[inline]
-    fn new(shutdown_tx: broadcast::Sender<u8>) -> Self {
+    fn new() -> Self {
+        let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
         let (tx, rx) = async_channel::bounded(g::DEFAULT_CHAN_SIZE);
         Self::with(tx, rx, shutdown_tx)
     }
@@ -110,6 +112,7 @@ impl<'a, U: Default + Send + Sync + 'static> Client<'a, U> {
             send_seq: 0, 
             recv_seq: 0, 
             reader: None, 
+            rbuf: [0; g::DEFAULT_BUF_SIZE],
             user_data: None, 
             builder: packet::Builder::new(), 
             shutdown_tx, 
@@ -123,13 +126,12 @@ impl<'a, U: Default + Send + Sync + 'static> Client<'a, U> {
     /// # Example
     /// 
     /// ```
-    /// let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
-    /// let cli = tg::nw::client::Client::<'static, ()>::new_arc(shutdown_tx);
+    /// let cli = tg::nw::client::Client::<'static, ()>::new_arc();
     /// cli.reset();
     /// ```
     #[inline]
-    pub fn new_arc(shutdown_tx: broadcast::Sender<u8>) -> Arc<Self> {
-        Arc::new(Self::new(shutdown_tx))
+    pub fn new_arc() -> Arc<Self> {
+        Arc::new(Self::new())
     }
 
     /// Arc 构造函数
@@ -259,6 +261,11 @@ impl<'a, U: Default + Send + Sync + 'static> Client<'a, U> {
                 panic!("----- shutdown_tx.send failed: {err} -----");
             }
         }
+    }
+
+    #[inline(always)]
+    pub fn rbuf_mut(&self) -> &mut [u8] {
+        unsafe { &mut *(&self.rbuf as *const [u8] as *mut [u8]) }
     }
 
     /// 获取用户数据

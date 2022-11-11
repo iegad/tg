@@ -1,62 +1,62 @@
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LogInfo {
-    #[prost(string, tag="1")]
+    #[prost(string, tag = "1")]
     pub trace_id: ::prost::alloc::string::String,
-    #[prost(int32, tag="2")]
+    #[prost(int32, tag = "2")]
     pub level: i32,
-    #[prost(string, tag="3")]
+    #[prost(string, tag = "3")]
     pub service: ::prost::alloc::string::String,
-    #[prost(string, tag="4")]
+    #[prost(string, tag = "4")]
     pub title: ::prost::alloc::string::String,
-    #[prost(string, tag="5")]
+    #[prost(string, tag = "5")]
     pub content: ::prost::alloc::string::String,
-    #[prost(int64, tag="6")]
+    #[prost(int64, tag = "6")]
     pub create_time: i64,
-    #[prost(int64, tag="7")]
+    #[prost(int64, tag = "7")]
     pub last_update: i64,
-    #[prost(int64, tag="8")]
+    #[prost(int64, tag = "8")]
     pub expire_time: i64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WriteLogReq {
-    #[prost(message, optional, tag="1")]
+    #[prost(message, optional, tag = "1")]
     pub log: ::core::option::Option<LogInfo>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WriteLogRsp {
-    #[prost(int32, tag="1")]
+    #[prost(int32, tag = "1")]
     pub code: i32,
-    #[prost(string, tag="2")]
+    #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetLogReq {
-    #[prost(string, tag="1")]
+    #[prost(string, tag = "1")]
     pub trace_id: ::prost::alloc::string::String,
-    #[prost(int32, tag="2")]
+    #[prost(int32, tag = "2")]
     pub level: i32,
-    #[prost(string, tag="3")]
+    #[prost(string, tag = "3")]
     pub service: ::prost::alloc::string::String,
-    #[prost(string, tag="4")]
+    #[prost(string, tag = "4")]
     pub content: ::prost::alloc::string::String,
-    #[prost(int64, tag="5")]
+    #[prost(int64, tag = "5")]
     pub create_time_beg: i64,
-    #[prost(int64, tag="6")]
+    #[prost(int64, tag = "6")]
     pub create_time_end: i64,
-    #[prost(int64, tag="7")]
+    #[prost(int64, tag = "7")]
     pub pos: i64,
-    #[prost(int64, tag="8")]
+    #[prost(int64, tag = "8")]
     pub offset: i64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetLogRsp {
-    #[prost(int32, tag="1")]
+    #[prost(int32, tag = "1")]
     pub code: i32,
-    #[prost(string, tag="2")]
+    #[prost(string, tag = "2")]
     pub error: ::prost::alloc::string::String,
-    #[prost(message, repeated, tag="3")]
+    #[prost(message, repeated, tag = "3")]
     pub data_list: ::prost::alloc::vec::Vec<LogInfo>,
-    #[prost(uint64, tag="4")]
+    #[prost(uint64, tag = "4")]
     pub total_count: u64,
 }
 /// Generated client implementations.

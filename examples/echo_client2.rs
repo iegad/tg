@@ -21,8 +21,7 @@ impl tg::nw::client::IEvent for EchoEvent {
 }
 
 async fn work() {
-    let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
-    let cli = client::Client::<()>::new_arc(shutdown_tx);
+    let cli = client::Client::<()>::new_arc();
     let controller = cli.clone();
 
     let j = tokio::spawn(async move {
